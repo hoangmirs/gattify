@@ -75,6 +75,15 @@ impl Receiver {
         }
     }
 
+    /// Validates and admits one frame into the bounded receive state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured protocol, payload-size, or queue-capacity error when
+    /// the frame cannot be safely accepted.
+    // Keeping admission and ACK decisions in one transition prevents partial
+    // state updates from escaping between reassembly and queue admission.
+    #[allow(clippy::too_many_lines)]
     pub fn receive(&mut self, bytes: &[u8]) -> BleResult<ReceiveAction> {
         let frame = Frame::decode(bytes, self.limits.max_logical_size)?;
         if frame.kind == FrameKind::Ack {
@@ -124,7 +133,12 @@ impl Receiver {
         if !complete {
             return Ok(ReceiveAction::None);
         }
-        let partial = self.partials.remove(&key).expect("complete partial exists");
+        let Some(partial) = self.partials.remove(&key) else {
+            return Err(BleError::new(
+                ErrorCode::ProtocolMismatch,
+                "completed reassembly state is missing",
+            ));
+        };
         if partial.received_bytes != partial.total_length {
             return Err(BleError::new(
                 ErrorCode::ProtocolMismatch,
@@ -133,7 +147,13 @@ impl Receiver {
         }
         let mut payload = Vec::with_capacity(partial.total_length);
         for fragment in &partial.fragments {
-            payload.extend_from_slice(fragment.as_ref().expect("all fragments present"));
+            let Some(fragment) = fragment else {
+                return Err(BleError::new(
+                    ErrorCode::ProtocolMismatch,
+                    "completed reassembly contains a missing fragment",
+                ));
+            };
+            payload.extend_from_slice(fragment);
         }
         self.buffered_bytes -= partial.received_bytes;
 
@@ -170,7 +190,8 @@ impl Receiver {
         }
 
         self.complete_queue_bytes += payload.len();
-        self.completed.push_back((frame.message_id, payload.clone()));
+        self.completed
+            .push_back((frame.message_id, payload.clone()));
         self.recent.push_back((frame.message_id, payload.clone()));
         while self.recent.len() > self.limits.recent_message_ids {
             self.recent.pop_front();

@@ -79,10 +79,15 @@ impl MockBackend {
 
 #[async_trait]
 impl Backend for MockBackend {
+    // A single exhaustive dispatcher keeps mock behavior aligned with Command.
+    #[allow(clippy::too_many_lines)]
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply> {
         let mut state = self.state.lock();
         if state.cancelled.contains(context.operation_id.as_str()) {
-            return Err(BleError::new(ErrorCode::Cancelled, "operation was cancelled"));
+            return Err(BleError::new(
+                ErrorCode::Cancelled,
+                "operation was cancelled",
+            ));
         }
 
         match command {
@@ -152,7 +157,7 @@ impl Backend for MockBackend {
                     &state.connections,
                     &connection_id,
                     &context.owner_id,
-                    connection_id.into(),
+                    connection_id.clone().into(),
                 )?;
                 Ok(Reply::Services(Vec::new()))
             }
@@ -161,7 +166,7 @@ impl Backend for MockBackend {
                     &state.connections,
                     &connection_id,
                     &context.owner_id,
-                    connection_id.into(),
+                    connection_id.clone().into(),
                 )?;
                 Ok(Reply::Bytes {
                     value_base64: String::new(),
@@ -176,7 +181,7 @@ impl Backend for MockBackend {
                     &state.connections,
                     &connection_id,
                     &context.owner_id,
-                    connection_id.into(),
+                    connection_id.clone().into(),
                 )?;
                 BASE64.decode(value_base64).map_err(|_| {
                     BleError::new(ErrorCode::InvalidArgument, "invalid base64 payload")
@@ -191,10 +196,9 @@ impl Backend for MockBackend {
                     connection_id.clone().into(),
                 )?;
                 let subscription_id = SubscriptionId::new(state.allocate("subscription"));
-                state.subscriptions.insert(
-                    subscription_id.clone(),
-                    (context.owner_id, connection_id),
-                );
+                state
+                    .subscriptions
+                    .insert(subscription_id.clone(), (context.owner_id, connection_id));
                 Ok(Reply::SubscriptionStarted { subscription_id })
             }
             Command::Unsubscribe { subscription_id } => {
@@ -258,7 +262,7 @@ impl Backend for MockBackend {
                     &state.servers,
                     &server_id,
                     &context.owner_id,
-                    server_id.into(),
+                    server_id.clone().into(),
                 )?;
                 Ok(Reply::Empty)
             }
@@ -363,15 +367,10 @@ mod tests {
                 panic!("expected scan handle")
             };
             let error = manager
-                .execute(
-                    OwnerId::new("owner-b"),
-                    Command::StopScan { scan_id },
-                    None,
-                )
+                .execute(OwnerId::new("owner-b"), Command::StopScan { scan_id }, None)
                 .await
                 .unwrap_err();
             assert_eq!(error.code, ErrorCode::InvalidHandle);
         });
     }
 }
-

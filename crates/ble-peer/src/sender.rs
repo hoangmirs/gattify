@@ -79,6 +79,12 @@ impl Sender {
         }
     }
 
+    /// Adds one logical payload to the bounded outbound queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns a payload-size, queue-capacity, or exhausted-ID error when the
+    /// payload cannot be admitted.
     pub fn enqueue(&mut self, payload: Vec<u8>) -> BleResult<u32> {
         if payload.len() > self.limits.max_logical_size {
             return Err(BleError::new(
@@ -108,16 +114,23 @@ impl Sender {
         Ok(message_id)
     }
 
+    /// Advances stop-and-wait delivery using the supplied monotonic time.
+    ///
+    /// # Errors
+    ///
+    /// Returns a framing error if the queued payload cannot be represented with
+    /// the configured characteristic and logical-size limits.
     pub fn poll(&mut self, now_ms: u64) -> BleResult<SendAction> {
         if let Some(pending) = &mut self.pending {
-            if now_ms.saturating_sub(pending.first_submitted_ms)
-                >= self.limits.absolute_deadline_ms
+            if now_ms.saturating_sub(pending.first_submitted_ms) >= self.limits.absolute_deadline_ms
             {
                 let message_id = pending.message.message_id;
                 self.pending = None;
                 return Ok(SendAction::Failed {
                     message_id,
-                    error: timeout_error("absolute send deadline elapsed; delivery may have occurred"),
+                    error: timeout_error(
+                        "absolute send deadline elapsed; delivery may have occurred",
+                    ),
                 });
             }
             if now_ms.saturating_sub(pending.last_submitted_ms) >= self.limits.ack_deadline_ms {
@@ -166,6 +179,12 @@ impl Sender {
         })
     }
 
+    /// Applies an acknowledgement to the current in-flight message.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol error when the acknowledgement identifies a different
+    /// in-flight message.
     pub fn acknowledge(&mut self, message_id: u32) -> BleResult<SendAction> {
         match &self.pending {
             Some(pending) if pending.message.message_id == message_id => {

@@ -43,17 +43,17 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Decodes and validates a protocol frame within the configured allocation limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol or payload-size error for malformed, unsupported, or
+    /// oversized input.
     pub fn decode(bytes: &[u8], max_logical_size: usize) -> BleResult<Self> {
         if bytes.len() < HEADER_LEN {
             return Err(BleError::new(
                 ErrorCode::ProtocolMismatch,
                 "frame is shorter than the 14-byte header",
-            ));
-        }
-        if bytes[0] != PROTOCOL_MAJOR {
-            return Err(BleError::new(
-                ErrorCode::ProtocolMismatch,
-                "unsupported protocol major",
             ));
         }
         if bytes.len() - HEADER_LEN > max_logical_size {
@@ -62,11 +62,17 @@ impl Frame {
                 "fragment payload exceeds the logical allocation ceiling",
             ));
         }
+        if bytes[0] != PROTOCOL_MAJOR {
+            return Err(BleError::new(
+                ErrorCode::ProtocolMismatch,
+                "unsupported protocol major",
+            ));
+        }
         let kind = FrameKind::try_from(bytes[1])?;
-        let message_id = u32::from_le_bytes(bytes[2..6].try_into().expect("fixed slice"));
-        let fragment_index = u16::from_le_bytes(bytes[6..8].try_into().expect("fixed slice"));
-        let fragment_count = u16::from_le_bytes(bytes[8..10].try_into().expect("fixed slice"));
-        let total_length = u32::from_le_bytes(bytes[10..14].try_into().expect("fixed slice"));
+        let message_id = u32::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]);
+        let fragment_index = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let fragment_count = u16::from_le_bytes([bytes[8], bytes[9]]);
+        let total_length = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]);
 
         let frame = Self {
             kind,
@@ -80,6 +86,12 @@ impl Frame {
         Ok(frame)
     }
 
+    /// Validates and encodes this frame using the v1 wire representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a protocol or payload-size error when the frame fields violate
+    /// the v1 contract or the configured allocation limit.
     pub fn encode(&self, max_logical_size: usize) -> BleResult<Vec<u8>> {
         self.validate(max_logical_size)?;
         let mut bytes = Vec::with_capacity(HEADER_LEN + self.payload.len());
@@ -123,9 +135,7 @@ impl Frame {
                     "ACK must contain a nonzero ID and no payload",
                 ))
             }
-            FrameKind::Hello | FrameKind::HelloAck | FrameKind::Close
-                if self.message_id != 0 =>
-            {
+            FrameKind::Hello | FrameKind::HelloAck | FrameKind::Close if self.message_id != 0 => {
                 Err(BleError::new(
                     ErrorCode::ProtocolMismatch,
                     "control message IDs must be zero",
@@ -148,6 +158,12 @@ impl Frame {
     }
 }
 
+/// Splits a logical payload into validated frames for a characteristic value limit.
+///
+/// # Errors
+///
+/// Returns an unsupported, protocol, or payload-size error when the value limit
+/// cannot carry v1 frames or the payload cannot be represented within the limits.
 pub fn fragment(
     kind: FrameKind,
     message_id: u32,
@@ -161,12 +177,18 @@ pub fn fragment(
             "characteristic value limit is below the 14-byte protocol header",
         ));
     }
-    if payload.len() > max_logical_size || payload.len() > u32::MAX as usize {
+    if payload.len() > max_logical_size {
         return Err(BleError::new(
             ErrorCode::PayloadTooLarge,
             "logical payload exceeds configured maximum",
         ));
     }
+    let total_length = u32::try_from(payload.len()).map_err(|_| {
+        BleError::new(
+            ErrorCode::PayloadTooLarge,
+            "logical payload exceeds the v1 length field",
+        )
+    })?;
     if kind == FrameKind::Ack {
         return Ok(vec![Frame::ack(message_id).encode(max_logical_size)?]);
     }
@@ -190,6 +212,12 @@ pub fn fragment(
     })?;
     let mut frames = Vec::with_capacity(count);
     for index in 0..count {
+        let fragment_index = u16::try_from(index).map_err(|_| {
+            BleError::new(
+                ErrorCode::PayloadTooLarge,
+                "payload requires an unrepresentable fragment index",
+            )
+        })?;
         let start = index * fragment_payload;
         let end = usize::min(start + fragment_payload, payload.len());
         let frame_payload = if payload.is_empty() {
@@ -201,9 +229,9 @@ pub fn fragment(
             Frame {
                 kind,
                 message_id,
-                fragment_index: index as u16,
+                fragment_index,
                 fragment_count,
-                total_length: payload.len() as u32,
+                total_length,
                 payload: frame_payload,
             }
             .encode(max_logical_size)?,
@@ -220,8 +248,14 @@ mod tests {
     fn twenty_byte_limit_yields_six_byte_fragments() {
         let payload: Vec<u8> = (0..13).collect();
         let frames = fragment(FrameKind::Data, 7, &payload, 20, 16 * 1024).unwrap();
-        assert_eq!(frames.iter().map(Vec::len).collect::<Vec<_>>(), [20, 20, 15]);
-        assert_eq!(Frame::decode(&frames[2], 16 * 1024).unwrap().fragment_count, 3);
+        assert_eq!(
+            frames.iter().map(Vec::len).collect::<Vec<_>>(),
+            [20, 20, 15]
+        );
+        assert_eq!(
+            Frame::decode(&frames[2], 16 * 1024).unwrap().fragment_count,
+            3
+        );
     }
 
     #[test]
@@ -239,8 +273,8 @@ mod tests {
         assert_eq!(
             data,
             [
-                0x01, 0x03, 0x78, 0x56, 0x34, 0x12, 0x01, 0x00, 0x03, 0x00, 0x07, 0x00,
-                0x00, 0x00, 0xaa, 0xbb
+                0x01, 0x03, 0x78, 0x56, 0x34, 0x12, 0x01, 0x00, 0x03, 0x00, 0x07, 0x00, 0x00, 0x00,
+                0xaa, 0xbb
             ]
         );
         assert_eq!(

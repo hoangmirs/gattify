@@ -17,6 +17,12 @@ impl<B: Backend> Manager<B> {
         }
     }
 
+    /// Executes one owner-scoped backend command and attaches its operation ID
+    /// to any returned error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured error produced by the backend.
     pub async fn execute(
         &self,
         owner_id: OwnerId,
@@ -41,4 +47,3 @@ impl<B: Backend> Manager<B> {
         &self.backend
     }
 }
-

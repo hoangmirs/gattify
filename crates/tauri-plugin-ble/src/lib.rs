@@ -8,7 +8,7 @@ mod system;
 
 use std::sync::Arc;
 
-use ble_core::{Backend, BleError, BleResult, Command, Manager, OwnerId, Reply};
+use ble_core::{Backend, BleResult, Command, Manager, OwnerId, Reply};
 use system::SystemBackend;
 
 #[derive(Clone)]
@@ -24,6 +24,11 @@ impl<B: Backend> BleRuntime<B> {
         }
     }
 
+    /// Executes one owner-scoped BLE command through the configured backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured backend error with its generated operation ID.
     pub async fn execute(
         &self,
         owner_id: OwnerId,
@@ -44,7 +49,8 @@ impl Default for BleRuntime<SystemBackend> {
 
 #[cfg(feature = "tauri")]
 mod tauri_api {
-    use super::*;
+    use super::{BleRuntime, SystemBackend};
+    use ble_core::{BleError, BleResult, Command, OwnerId, Reply};
     use serde::Deserialize;
     use tauri::{
         plugin::{Builder, TauriPlugin},
@@ -143,10 +149,7 @@ mod tauri_api {
     }
 
     #[tauri::command]
-    async fn dial_peer(
-        _endpoint_id: String,
-        _device_id: String,
-    ) -> BleResult<serde_json::Value> {
+    async fn dial_peer(_endpoint_id: String, _device_id: String) -> BleResult<serde_json::Value> {
         Err(peer_unavailable())
     }
 

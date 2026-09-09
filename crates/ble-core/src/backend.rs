@@ -16,13 +16,19 @@ pub enum Command {
     CheckPermissions,
     RequestPermissions(PermissionRequest),
     StartScan(ScanOptions),
-    StopScan { scan_id: ScanId },
+    StopScan {
+        scan_id: ScanId,
+    },
     Connect {
         device_id: DeviceId,
         options: ConnectOptions,
     },
-    Disconnect { connection_id: ConnectionId },
-    DiscoverServices { connection_id: ConnectionId },
+    Disconnect {
+        connection_id: ConnectionId,
+    },
+    DiscoverServices {
+        connection_id: ConnectionId,
+    },
     Read {
         connection_id: ConnectionId,
         characteristic: CharacteristicHandle,
@@ -41,12 +47,16 @@ pub enum Command {
         subscription_id: SubscriptionId,
     },
     CreateServer(ServerDefinition),
-    CloseServer { server_id: ServerId },
+    CloseServer {
+        server_id: ServerId,
+    },
     StartAdvertising {
         server_id: ServerId,
         options: AdvertisingOptions,
     },
-    StopAdvertising { server_id: ServerId },
+    StopAdvertising {
+        server_id: ServerId,
+    },
     SetValue {
         server_id: ServerId,
         characteristic_key: String,
@@ -58,29 +68,40 @@ pub enum Command {
         characteristic_key: String,
         value_base64: String,
     },
-    Cancel { operation_id: OperationId },
+    Cancel {
+        operation_id: OperationId,
+    },
     CloseOwner,
     DebugResources,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
+// Keeping replies inline preserves the serialized command contract and avoids
+// heap allocation on every capability probe.
+#[allow(clippy::large_enum_variant)]
 pub enum Reply {
     Empty,
     State(AdapterState),
     Capabilities(Capabilities),
     Permissions(PermissionState),
-    ScanStarted { scan_id: ScanId },
+    ScanStarted {
+        scan_id: ScanId,
+    },
     Connected {
         connection_id: ConnectionId,
         limits: LinkLimits,
     },
     Services(Vec<ServiceInstance>),
-    Bytes { value_base64: String },
+    Bytes {
+        value_base64: String,
+    },
     SubscriptionStarted {
         subscription_id: SubscriptionId,
     },
-    ServerCreated { server_id: ServerId },
+    ServerCreated {
+        server_id: ServerId,
+    },
     AdvertisingStarted(AdvertisingReport),
     Resources(ResourceSnapshot),
 }
@@ -88,10 +109,18 @@ pub enum Reply {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
 pub enum Event {
-    AdapterStateChanged { state: AdapterState },
-    ScanResult { device: DiscoveredDevice },
-    ScanStopped { scan_id: ScanId },
-    ConnectionClosed { connection_id: ConnectionId },
+    AdapterStateChanged {
+        state: AdapterState,
+    },
+    ScanResult {
+        device: DiscoveredDevice,
+    },
+    ScanStopped {
+        scan_id: ScanId,
+    },
+    ConnectionClosed {
+        connection_id: ConnectionId,
+    },
     CharacteristicValue {
         subscription_id: SubscriptionId,
         value_base64: String,
@@ -108,7 +137,10 @@ pub enum Event {
         characteristic_key: String,
         subscribed: bool,
     },
-    CriticalStateLoss { resource_id: String, reason: String },
+    CriticalStateLoss {
+        resource_id: String,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,4 +154,3 @@ pub struct OperationContext {
 pub trait Backend: Send + Sync + 'static {
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply>;
 }
-

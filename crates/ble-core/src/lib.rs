@@ -1,6 +1,6 @@
 //! Platform-neutral contracts for `tauri-plugin-ble`.
 //!
-//! The crate deliberately contains no Tauri, OS SDK, or WebView types.
+//! The crate deliberately contains no Tauri, OS SDK, or `WebView` types.
 
 mod backend;
 mod error;
@@ -13,4 +13,3 @@ pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
 pub use manager::Manager;
 pub use mock::{FakeClock, MockBackend};
 pub use model::*;
-

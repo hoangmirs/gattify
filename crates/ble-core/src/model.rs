@@ -275,6 +275,8 @@ pub struct CharacteristicInstance {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+// These independent flags mirror the BLE characteristic property bitfield.
+#[allow(clippy::struct_excessive_bools)]
 pub struct CharacteristicProperties {
     pub read: bool,
     pub write: bool,
@@ -380,9 +382,21 @@ impl Default for Deadlines {
     }
 }
 
+/// Validates a canonical 128-bit hexadecimal UUID, with or without hyphens.
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::InvalidArgument`] when `value` is not a 128-bit UUID.
 pub fn validate_uuid(value: &str) -> BleResult<()> {
-    let compact: String = value.chars().filter(|character| *character != '-').collect();
-    if compact.len() != 32 || !compact.chars().all(|character| character.is_ascii_hexdigit()) {
+    let compact: String = value
+        .chars()
+        .filter(|character| *character != '-')
+        .collect();
+    if compact.len() != 32
+        || !compact
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
         return Err(BleError::new(
             ErrorCode::InvalidArgument,
             "UUID must be a 128-bit hexadecimal UUID",
@@ -391,6 +405,12 @@ pub fn validate_uuid(value: &str) -> BleResult<()> {
     Ok(())
 }
 
+/// Validates a local GATT server definition before it reaches a platform SDK.
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::InvalidArgument`] for empty definitions, invalid UUIDs,
+/// duplicate instance keys, zero maximum lengths, or invalid initial values.
 pub fn validate_server_definition(definition: &ServerDefinition) -> BleResult<()> {
     use std::collections::HashSet;
 
@@ -449,4 +469,3 @@ impl FromStr for AdapterState {
         }
     }
 }
-

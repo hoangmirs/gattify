@@ -38,9 +38,8 @@ impl Backend for SystemBackend {
 
 fn unverified_capabilities() -> Capabilities {
     let platform = std::env::consts::OS;
-    let unknown = |capability: &str| {
-        Support::unknown(format!("{platform}:{capability}:backendNotVerified"))
-    };
+    let unknown =
+        |capability: &str| Support::unknown(format!("{platform}:{capability}:backendNotVerified"));
     Capabilities {
         central: unknown("central"),
         peripheral: unknown("peripheral"),
@@ -70,4 +69,3 @@ mod tests {
         ));
     }
 }
-

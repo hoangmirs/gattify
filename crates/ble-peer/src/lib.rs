@@ -15,4 +15,3 @@ pub use sender::{QueuedMessage, SendAction, SendLimits, Sender};
 pub const INFO_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30101";
 pub const RX_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30102";
 pub const TX_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30103";
-

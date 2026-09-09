@@ -85,4 +85,3 @@ impl BleError {
 }
 
 pub type BleResult<T> = Result<T, BleError>;
-
