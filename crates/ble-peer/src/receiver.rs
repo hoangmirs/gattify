@@ -275,9 +275,11 @@ impl Receiver {
         } else {
             0
         };
-        let added_recent_bytes = (self.limits.recent_message_ids > 0)
-            .then_some(payload.len())
-            .unwrap_or(0);
+        let added_recent_bytes = if self.limits.recent_message_ids > 0 {
+            payload.len()
+        } else {
+            0
+        };
         let admission_bytes = payload
             .len()
             .checked_add(added_recent_bytes)
