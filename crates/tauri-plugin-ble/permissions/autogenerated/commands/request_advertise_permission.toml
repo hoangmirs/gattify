@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-request-advertise-permission"
+description = "Allows requesting the operating-system advertise permission."
+commands.allow = ["request_advertise_permission"]
+
+[[permission]]
+identifier = "deny-request-advertise-permission"
+description = "Denies requesting the operating-system advertise permission."
+commands.deny = ["request_advertise_permission"]

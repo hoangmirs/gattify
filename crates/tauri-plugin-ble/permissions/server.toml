@@ -1,5 +1,4 @@
 [[set]]
 identifier = "server"
 description = "Register and manage a local GATT server."
-permissions = ["allow-execute"]
-
+permissions = ["allow-execute-server", "allow-cancel"]

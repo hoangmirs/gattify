@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-create-endpoint"
+description = "Allows creating a BLE peer endpoint."
+commands.allow = ["create_endpoint"]
+
+[[permission]]
+identifier = "deny-create-endpoint"
+description = "Denies creating a BLE peer endpoint."
+commands.deny = ["create_endpoint"]

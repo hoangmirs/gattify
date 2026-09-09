@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-execute-server"
+description = "Allows local GATT server procedures."
+commands.allow = ["execute_server"]
+
+[[permission]]
+identifier = "deny-execute-server"
+description = "Denies local GATT server procedures."
+commands.deny = ["execute_server"]

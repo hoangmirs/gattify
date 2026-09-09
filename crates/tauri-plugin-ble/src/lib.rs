@@ -8,7 +8,7 @@ mod system;
 
 use std::sync::Arc;
 
-use ble_core::{Backend, BleResult, Command, Manager, OwnerId, Reply};
+use ble_core::{Backend, BleResult, Command, Manager, OperationId, OwnerId, Reply};
 use system::SystemBackend;
 
 #[derive(Clone)]
@@ -39,6 +39,36 @@ impl<B: Backend> BleRuntime<B> {
             .execute(owner_id, command, deadline_millis)
             .await
     }
+
+    /// Executes an owner-scoped command with a caller-visible operation ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation, duplicate-operation, or backend error.
+    pub async fn execute_with_id(
+        &self,
+        owner_id: OwnerId,
+        operation_id: OperationId,
+        command: Command,
+        deadline_millis: Option<u64>,
+    ) -> BleResult<Reply> {
+        self.manager
+            .execute_with_id(owner_id, operation_id, command, deadline_millis)
+            .await
+    }
+
+    /// Cancels an active operation owned by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns an ownership or backend cancellation error.
+    pub async fn cancel(
+        &self,
+        owner_id: &OwnerId,
+        operation_id: &OperationId,
+    ) -> BleResult<Reply> {
+        self.manager.cancel(owner_id, operation_id).await
+    }
 }
 
 impl Default for BleRuntime<SystemBackend> {
@@ -50,7 +80,9 @@ impl Default for BleRuntime<SystemBackend> {
 #[cfg(feature = "tauri")]
 mod tauri_api {
     use super::{BleRuntime, SystemBackend};
-    use ble_core::{BleError, BleResult, Command, OwnerId, Reply};
+    use ble_core::{
+        BleError, BleResult, Command, OperationId, OwnerId, PermissionRequest, Reply,
+    };
     use serde::Deserialize;
     use tauri::{
         plugin::{Builder, TauriPlugin},
@@ -60,21 +92,185 @@ mod tauri_api {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct ExecuteRequest {
+        operation_id: OperationId,
         command: Command,
         deadline_millis: Option<u64>,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CancelRequest {
+        operation_id: OperationId,
+    }
+
+    #[derive(Clone, Copy)]
+    enum CommandRole {
+        Scan,
+        Connect,
+        Server,
+        Advertise,
+    }
+
+    fn command_has_role(command: &Command, role: CommandRole) -> bool {
+        match role {
+            CommandRole::Scan => matches!(command, Command::StartScan(_) | Command::StopScan { .. }),
+            CommandRole::Connect => matches!(
+                command,
+                Command::Connect { .. }
+                    | Command::Disconnect { .. }
+                    | Command::DiscoverServices { .. }
+                    | Command::Read { .. }
+                    | Command::Write { .. }
+                    | Command::Subscribe { .. }
+                    | Command::Unsubscribe { .. }
+            ),
+            CommandRole::Server => matches!(
+                command,
+                Command::CreateServer(_)
+                    | Command::CloseServer { .. }
+                    | Command::SetValue { .. }
+                    | Command::Notify { .. }
+            ),
+            CommandRole::Advertise => matches!(
+                command,
+                Command::StartAdvertising { .. } | Command::StopAdvertising { .. }
+            ),
+        }
+    }
+
+    async fn execute_request<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: ExecuteRequest,
+        role: CommandRole,
+    ) -> BleResult<Reply> {
+        if !command_has_role(&request.command, role) {
+            return Err(BleError::new(
+                ble_core::ErrorCode::InvalidArgument,
+                "command is not permitted through this role-specific endpoint",
+            ));
+        }
+        state
+            .execute_with_id(
+                OwnerId::new(format!("webview:{}", webview.label())),
+                request.operation_id,
+                request.command,
+                request.deadline_millis,
+            )
+            .await
+    }
+
     #[tauri::command]
-    async fn execute<R: Runtime>(
+    async fn execute_scan<R: Runtime>(
         webview: Webview<R>,
         state: State<'_, BleRuntime<SystemBackend>>,
         request: ExecuteRequest,
     ) -> BleResult<Reply> {
+        execute_request(webview, state, request, CommandRole::Scan).await
+    }
+
+    #[tauri::command]
+    async fn execute_connect<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: ExecuteRequest,
+    ) -> BleResult<Reply> {
+        execute_request(webview, state, request, CommandRole::Connect).await
+    }
+
+    #[tauri::command]
+    async fn execute_server<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: ExecuteRequest,
+    ) -> BleResult<Reply> {
+        execute_request(webview, state, request, CommandRole::Server).await
+    }
+
+    #[tauri::command]
+    async fn execute_advertise<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: ExecuteRequest,
+    ) -> BleResult<Reply> {
+        execute_request(webview, state, request, CommandRole::Advertise).await
+    }
+
+    async fn request_permission<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: PermissionRequest,
+    ) -> BleResult<Reply> {
         state
             .execute(
                 OwnerId::new(format!("webview:{}", webview.label())),
-                request.command,
-                request.deadline_millis,
+                Command::RequestPermissions(request),
+                None,
+            )
+            .await
+    }
+
+    #[tauri::command]
+    async fn request_scan_permission<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+    ) -> BleResult<Reply> {
+        request_permission(
+            webview,
+            state,
+            PermissionRequest {
+                scan: true,
+                connect: false,
+                advertise: false,
+            },
+        )
+        .await
+    }
+
+    #[tauri::command]
+    async fn request_connect_permission<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+    ) -> BleResult<Reply> {
+        request_permission(
+            webview,
+            state,
+            PermissionRequest {
+                scan: false,
+                connect: true,
+                advertise: false,
+            },
+        )
+        .await
+    }
+
+    #[tauri::command]
+    async fn request_advertise_permission<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+    ) -> BleResult<Reply> {
+        request_permission(
+            webview,
+            state,
+            PermissionRequest {
+                scan: false,
+                connect: false,
+                advertise: true,
+            },
+        )
+        .await
+    }
+
+    #[tauri::command]
+    async fn cancel<R: Runtime>(
+        webview: Webview<R>,
+        state: State<'_, BleRuntime<SystemBackend>>,
+        request: CancelRequest,
+    ) -> BleResult<Reply> {
+        state
+            .cancel(
+                &OwnerId::new(format!("webview:{}", webview.label())),
+                &request.operation_id,
             )
             .await
     }
@@ -180,7 +376,14 @@ mod tauri_api {
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
-                execute,
+                execute_scan,
+                execute_connect,
+                execute_server,
+                execute_advertise,
+                request_scan_permission,
+                request_connect_permission,
+                request_advertise_permission,
+                cancel,
                 get_state,
                 get_capabilities,
                 check_permissions,

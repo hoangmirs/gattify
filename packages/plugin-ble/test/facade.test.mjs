@@ -26,6 +26,12 @@ class FakeBridge {
         },
       };
     }
+    if (command.startsWith("plugin:ble|request_") && command.endsWith("_permission")) {
+      return {
+        kind: "permissions",
+        payload: { scan: "granted", connect: "granted", advertise: "granted" },
+      };
+    }
     if (kind === "startScan") return { kind: "scanStarted", payload: { scanId: "scan-1" } };
     if (kind === "stopScan" || command === "plugin:ble|close") return { kind: "empty" };
     throw new Error("unexpected command " + command + " / " + kind);
@@ -52,6 +58,11 @@ test("session sends typed commands and close is idempotent", async () => {
     bridge.calls.filter(([, args]) => args?.request?.command?.kind === "stopScan").length,
     1,
   );
+  const startCall = bridge.calls.find(
+    ([, args]) => args?.request?.command?.kind === "startScan",
+  );
+  assert.equal(startCall[0], "plugin:ble|execute_scan");
+  assert.equal(typeof startCall[1].request.operationId, "string");
 });
 
 test("capabilities preserve unsupported and unknown instead of booleans", async () => {
@@ -59,4 +70,34 @@ test("capabilities preserve unsupported and unknown instead of booleans", async 
   const capabilities = await session.getCapabilities();
   assert.equal(capabilities.central.level, "supported");
   assert.equal(capabilities.background.level, "unsupported");
+});
+
+test("permission requests use role-specific commands", async () => {
+  const bridge = new FakeBridge();
+  const session = await createBle({ bridge });
+  await session.requestPermissions({ scan: true, connect: false, advertise: true });
+  assert.deepEqual(
+    bridge.calls.map(([command]) => command),
+    ["plugin:ble|request_scan_permission", "plugin:ble|request_advertise_permission"],
+  );
+});
+
+test("aborting a live operation invokes native cancellation", async () => {
+  const calls = [];
+  const bridge = {
+    invoke(command, args) {
+      calls.push([command, args]);
+      if (command === "plugin:ble|cancel") return Promise.resolve({ kind: "empty" });
+      return new Promise(() => {});
+    },
+  };
+  const session = await createBle({ bridge });
+  const controller = new AbortController();
+  const pending = session.scan({ signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+
+  const execute = calls.find(([command]) => command === "plugin:ble|execute_scan");
+  const cancel = calls.find(([command]) => command === "plugin:ble|cancel");
+  assert.equal(cancel[1].request.operationId, execute[1].request.operationId);
 });

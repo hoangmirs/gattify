@@ -9,7 +9,12 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    content = "payload",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Command {
     GetState,
     GetCapabilities,
@@ -76,7 +81,12 @@ pub enum Command {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    content = "payload",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 // Keeping replies inline preserves the serialized command contract and avoids
 // heap allocation on every capability probe.
 #[allow(clippy::large_enum_variant)]
@@ -107,7 +117,12 @@ pub enum Reply {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    content = "payload",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Event {
     AdapterStateChanged {
         state: AdapterState,
@@ -153,4 +168,38 @@ pub struct OperationContext {
 #[async_trait]
 pub trait Backend: Send + Sync + 'static {
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_fields_match_the_typescript_wire_contract() {
+        let command: Command =
+            serde_json::from_str(r#"{"kind":"stopScan","payload":{"scanId":"scan-1"}}"#).unwrap();
+        assert_eq!(
+            command,
+            Command::StopScan {
+                scan_id: ScanId::new("scan-1")
+            }
+        );
+    }
+
+    #[test]
+    fn reply_and_event_fields_use_camel_case() {
+        let reply = serde_json::to_value(Reply::ScanStarted {
+            scan_id: ScanId::new("scan-1"),
+        })
+        .unwrap();
+        assert_eq!(reply["payload"]["scanId"], "scan-1");
+
+        let event = serde_json::to_value(Event::CharacteristicValue {
+            subscription_id: SubscriptionId::new("subscription-1"),
+            value_base64: "AA==".into(),
+        })
+        .unwrap();
+        assert_eq!(event["payload"]["subscriptionId"], "subscription-1");
+        assert_eq!(event["payload"]["valueBase64"], "AA==");
+    }
 }

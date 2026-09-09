@@ -1,0 +1,10 @@
+[[set]]
+identifier = "peer"
+description = "Create endpoints, connect peers, exchange messages and close peer resources."
+permissions = [
+  "allow-create-endpoint",
+  "allow-dial-peer",
+  "allow-send-peer",
+  "allow-close-peer",
+  "allow-close-endpoint",
+]

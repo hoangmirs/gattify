@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-dial-peer"
+description = "Allows connecting a peer endpoint to a discovered device."
+commands.allow = ["dial_peer"]
+
+[[permission]]
+identifier = "deny-dial-peer"
+description = "Denies connecting a peer endpoint."
+commands.deny = ["dial_peer"]

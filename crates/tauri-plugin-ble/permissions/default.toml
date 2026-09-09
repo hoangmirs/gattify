@@ -1,4 +1,3 @@
 [default]
 description = "Status-only default permissions for the BLE plugin."
-permissions = ["allow-get-state", "allow-get-capabilities", "allow-check-permissions"]
-
+permissions = ["allow-get-state", "allow-get-capabilities", "allow-check-permissions", "allow-close"]

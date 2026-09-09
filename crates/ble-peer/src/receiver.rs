@@ -1,4 +1,8 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    mem::size_of,
+    time::Instant,
+};
 
 use ble_core::{BleError, BleResult, ErrorCode};
 
@@ -8,9 +12,11 @@ use crate::{Frame, FrameKind};
 pub struct ReceiverLimits {
     pub max_logical_size: usize,
     pub max_buffered_bytes: usize,
+    pub max_partial_messages: usize,
     pub max_complete_messages: usize,
     pub max_complete_queue_bytes: usize,
     pub recent_message_ids: usize,
+    pub reassembly_deadline_ms: u64,
 }
 
 impl Default for ReceiverLimits {
@@ -18,9 +24,11 @@ impl Default for ReceiverLimits {
         Self {
             max_logical_size: 16 * 1024,
             max_buffered_bytes: 1024 * 1024,
+            max_partial_messages: 64,
             max_complete_messages: 64,
             max_complete_queue_bytes: 64 * 1024,
             recent_message_ids: 32,
+            reassembly_deadline_ms: 30_000,
         }
     }
 }
@@ -51,6 +59,8 @@ struct Partial {
     total_length: usize,
     fragments: Vec<Option<Vec<u8>>>,
     received_bytes: usize,
+    reserved_bytes: usize,
+    started_ms: u64,
 }
 
 pub struct Receiver {
@@ -60,6 +70,8 @@ pub struct Receiver {
     completed: VecDeque<(u32, Vec<u8>)>,
     complete_queue_bytes: usize,
     recent: VecDeque<(u32, Vec<u8>)>,
+    recent_bytes: usize,
+    started_at: Instant,
 }
 
 impl Receiver {
@@ -72,6 +84,8 @@ impl Receiver {
             completed: VecDeque::new(),
             complete_queue_bytes: 0,
             recent: VecDeque::new(),
+            recent_bytes: 0,
+            started_at: Instant::now(),
         }
     }
 
@@ -85,6 +99,23 @@ impl Receiver {
     // state updates from escaping between reassembly and queue admission.
     #[allow(clippy::too_many_lines)]
     pub fn receive(&mut self, bytes: &[u8]) -> BleResult<ReceiveAction> {
+        let elapsed = self.started_at.elapsed().as_millis();
+        let now_ms = u64::try_from(elapsed).unwrap_or(u64::MAX);
+        self.receive_at(bytes, now_ms)
+    }
+
+    /// Receives one frame using a caller-provided monotonic timestamp.
+    ///
+    /// This entry point makes expiry behavior deterministic in native adapters
+    /// and tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured protocol, payload-size, or queue-capacity error when
+    /// the frame cannot be safely accepted.
+    #[allow(clippy::too_many_lines)]
+    pub fn receive_at(&mut self, bytes: &[u8], now_ms: u64) -> BleResult<ReceiveAction> {
+        self.expire_partials(now_ms);
         let frame = Frame::decode(bytes, self.limits.max_logical_size)?;
         if frame.kind == FrameKind::Ack {
             return Ok(ReceiveAction::Ack {
@@ -94,12 +125,56 @@ impl Receiver {
 
         let key = (frame.kind, frame.message_id);
         let declared_total = frame.total_length as usize;
+        if !self.partials.contains_key(&key) {
+            if self.partials.len() >= self.limits.max_partial_messages {
+                return Err(BleError::new(
+                    ErrorCode::QueueFull,
+                    "partial-message limit reached",
+                ));
+            }
+            let reserved_bytes = usize::from(frame.fragment_count)
+                .checked_mul(size_of::<Option<Vec<u8>>>())
+                .and_then(|slots| {
+                    slots
+                        .checked_add(size_of::<Partial>())
+                        .and_then(|bytes| bytes.checked_add(size_of::<(FrameKind, u32)>()))
+                })
+                .ok_or_else(|| {
+                    BleError::new(
+                        ErrorCode::PayloadTooLarge,
+                        "fragment metadata size overflow",
+                    )
+                })?;
+            if self
+                .total_buffered_bytes()
+                .checked_add(reserved_bytes)
+                .is_none_or(|bytes| bytes > self.limits.max_buffered_bytes)
+            {
+                return Err(BleError::new(
+                    ErrorCode::QueueFull,
+                    "fragment metadata exceeds the protocol buffer budget",
+                ));
+            }
+            self.buffered_bytes += reserved_bytes;
+            self.partials.insert(
+                key,
+                Partial {
+                    total_length: declared_total,
+                    fragments: vec![None; usize::from(frame.fragment_count)],
+                    received_bytes: 0,
+                    reserved_bytes,
+                    started_ms: now_ms,
+                },
+            );
+        }
+        let buffered_before_payload = self.total_buffered_bytes();
         let complete = {
-            let partial = self.partials.entry(key).or_insert_with(|| Partial {
-                total_length: declared_total,
-                fragments: vec![None; usize::from(frame.fragment_count)],
-                received_bytes: 0,
-            });
+            let Some(partial) = self.partials.get_mut(&key) else {
+                return Err(BleError::new(
+                    ErrorCode::Internal,
+                    "partial reassembly state is missing",
+                ));
+            };
             if partial.total_length != declared_total
                 || partial.fragments.len() != usize::from(frame.fragment_count)
             {
@@ -118,7 +193,10 @@ impl Receiver {
                     "duplicate fragment has different content",
                 ));
             }
-            if self.buffered_bytes + frame.payload.len() > self.limits.max_buffered_bytes {
+            if buffered_before_payload
+                .checked_add(frame.payload.len())
+                .is_none_or(|bytes| bytes > self.limits.max_buffered_bytes)
+            {
                 return Err(BleError::new(
                     ErrorCode::QueueFull,
                     "adapter protocol buffer budget exhausted",
@@ -139,6 +217,9 @@ impl Receiver {
                 "completed reassembly state is missing",
             ));
         };
+        self.buffered_bytes = self
+            .buffered_bytes
+            .saturating_sub(partial.reserved_bytes + partial.received_bytes);
         if partial.received_bytes != partial.total_length {
             return Err(BleError::new(
                 ErrorCode::ProtocolMismatch,
@@ -155,8 +236,6 @@ impl Receiver {
             };
             payload.extend_from_slice(fragment);
         }
-        self.buffered_bytes -= partial.received_bytes;
-
         if frame.kind != FrameKind::Data {
             return Ok(ReceiveAction::Control {
                 kind: frame.kind,
@@ -189,12 +268,39 @@ impl Receiver {
             ));
         }
 
+        let evicted_recent_bytes = if self.limits.recent_message_ids > 0
+            && self.recent.len() >= self.limits.recent_message_ids
+        {
+            self.recent.front().map_or(0, |(_, value)| value.len())
+        } else {
+            0
+        };
+        let added_recent_bytes = (self.limits.recent_message_ids > 0)
+            .then_some(payload.len())
+            .unwrap_or(0);
+        let admission_bytes = payload
+            .len()
+            .checked_add(added_recent_bytes)
+            .and_then(|bytes| self.total_buffered_bytes().checked_add(bytes))
+            .map(|bytes| bytes.saturating_sub(evicted_recent_bytes));
+        if admission_bytes.is_none_or(|bytes| bytes > self.limits.max_buffered_bytes) {
+            return Err(BleError::new(
+                ErrorCode::QueueFull,
+                "complete message exceeds the total protocol buffer budget",
+            ));
+        }
+
         self.complete_queue_bytes += payload.len();
         self.completed
             .push_back((frame.message_id, payload.clone()));
-        self.recent.push_back((frame.message_id, payload.clone()));
+        if self.limits.recent_message_ids > 0 {
+            self.recent_bytes += payload.len();
+            self.recent.push_back((frame.message_id, payload.clone()));
+        }
         while self.recent.len() > self.limits.recent_message_ids {
-            self.recent.pop_front();
+            if let Some((_, evicted)) = self.recent.pop_front() {
+                self.recent_bytes -= evicted.len();
+            }
         }
         Ok(ReceiveAction::Message {
             message_id: frame.message_id,
@@ -212,6 +318,30 @@ impl Receiver {
     pub fn disconnect(&mut self) {
         self.partials.clear();
         self.buffered_bytes = 0;
+    }
+
+    fn expire_partials(&mut self, now_ms: u64) {
+        let expired: Vec<_> = self
+            .partials
+            .iter()
+            .filter_map(|(key, partial)| {
+                (now_ms.saturating_sub(partial.started_ms) >= self.limits.reassembly_deadline_ms)
+                    .then_some(*key)
+            })
+            .collect();
+        for key in expired {
+            if let Some(partial) = self.partials.remove(&key) {
+                self.buffered_bytes = self
+                    .buffered_bytes
+                    .saturating_sub(partial.reserved_bytes + partial.received_bytes);
+            }
+        }
+    }
+
+    fn total_buffered_bytes(&self) -> usize {
+        self.buffered_bytes
+            .saturating_add(self.complete_queue_bytes)
+            .saturating_add(self.recent_bytes)
     }
 }
 
@@ -287,6 +417,41 @@ mod tests {
                 kind: FrameKind::Hello,
                 payload: b"hello".to_vec(),
             }
+        );
+    }
+
+    #[test]
+    fn metadata_allocation_respects_the_buffer_budget() {
+        let frame = fragment(FrameKind::Data, 1, b"ab", 15, 16 * 1024).unwrap();
+        let mut receiver = Receiver::new(ReceiverLimits {
+            max_buffered_bytes: 0,
+            ..ReceiverLimits::default()
+        });
+        assert_eq!(
+            receiver.receive(&frame[0]).unwrap_err().code,
+            ErrorCode::QueueFull
+        );
+    }
+
+    #[test]
+    fn expired_partial_releases_its_budget() {
+        let frames = fragment(FrameKind::Data, 1, b"ab", 15, 16 * 1024).unwrap();
+        let metadata_budget = 512;
+        let mut receiver = Receiver::new(ReceiverLimits {
+            max_buffered_bytes: metadata_budget,
+            max_partial_messages: 1,
+            reassembly_deadline_ms: 10,
+            ..ReceiverLimits::default()
+        });
+        assert_eq!(
+            receiver.receive_at(&frames[0], 0).unwrap(),
+            ReceiveAction::None
+        );
+
+        let replacement = fragment(FrameKind::Data, 2, b"cd", 15, 16 * 1024).unwrap();
+        assert_eq!(
+            receiver.receive_at(&replacement[0], 10).unwrap(),
+            ReceiveAction::None
         );
     }
 }

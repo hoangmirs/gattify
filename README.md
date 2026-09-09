@@ -55,6 +55,16 @@ Importing the package does not initialize Bluetooth. Raw-only consumers may
 disable the Rust peer feature. Peer imports return Unsupported unless that
 feature and a peer-capable native backend are both available.
 
+Tauri capabilities opt into roles separately with `ble:scan`, `ble:connect`,
+`ble:server`, `ble:advertise`, and `ble:peer`. The default `ble:default`
+permission exposes status queries and owner cleanup only. The Rust boundary
+validates each role-specific command even after Tauri authorizes it.
+
+`scan` and `connect` forward a caller's `AbortSignal` to an owner-scoped native
+cancellation command using the same operation ID. A backend may be unable to
+interrupt an OS procedure immediately; late completions must still be ignored
+and cleaned up by that backend.
+
 ## Safety and scope
 
 The peer profile is unencrypted and unauthenticated. It is suitable only for

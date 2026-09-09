@@ -1,5 +1,4 @@
 [[set]]
 identifier = "status"
 description = "Read adapter state, capabilities and permission state."
-permissions = ["allow-execute"]
-
+permissions = ["allow-get-state", "allow-get-capabilities", "allow-check-permissions"]

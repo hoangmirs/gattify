@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-request-scan-permission"
+description = "Allows requesting the operating-system scan permission."
+commands.allow = ["request_scan_permission"]
+
+[[permission]]
+identifier = "deny-request-scan-permission"
+description = "Denies requesting the operating-system scan permission."
+commands.deny = ["request_scan_permission"]

@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-request-connect-permission"
+description = "Allows requesting the operating-system connect permission."
+commands.allow = ["request_connect_permission"]
+
+[[permission]]
+identifier = "deny-request-connect-permission"
+description = "Denies requesting the operating-system connect permission."
+commands.deny = ["request_connect_permission"]

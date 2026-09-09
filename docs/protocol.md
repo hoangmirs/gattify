@@ -43,3 +43,8 @@ deadline. The receiver ACKs only after validation and admission to its bounded
 complete-message queue. Valid duplicates are ACKed again and never emitted
 twice. Message-ID reuse with different content is a protocol error.
 
+The adapter buffer ceiling accounts for partial-fragment metadata, partial
+payloads, admitted complete messages, and the bounded recent-message cache.
+At most 64 partial messages are retained by default. Incomplete reassemblies
+expire after 30 seconds, and impossible declarations such as a non-empty
+message with more fragments than payload bytes are rejected before allocation.

@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-cancel"
+description = "Allows cancelling BLE operations owned by the calling WebView."
+commands.allow = ["cancel"]
+
+[[permission]]
+identifier = "deny-cancel"
+description = "Denies cancelling BLE operations."
+commands.deny = ["cancel"]

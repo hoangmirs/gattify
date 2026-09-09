@@ -118,6 +118,32 @@ impl Frame {
                 "logical payload exceeds configured maximum",
             ));
         }
+        if self.payload.len() > self.total_length as usize {
+            return Err(BleError::new(
+                ErrorCode::ProtocolMismatch,
+                "fragment payload exceeds the declared logical length",
+            ));
+        }
+        if self.kind != FrameKind::Ack {
+            if self.total_length == 0
+                && (self.fragment_count != 1
+                    || self.fragment_index != 0
+                    || !self.payload.is_empty())
+            {
+                return Err(BleError::new(
+                    ErrorCode::ProtocolMismatch,
+                    "empty messages must use one header-only frame",
+                ));
+            }
+            if self.total_length > 0
+                && (self.payload.is_empty() || u32::from(self.fragment_count) > self.total_length)
+            {
+                return Err(BleError::new(
+                    ErrorCode::ProtocolMismatch,
+                    "fragment count or payload is impossible for the declared length",
+                ));
+            }
+        }
         match self.kind {
             FrameKind::Data if self.message_id == 0 => Err(BleError::new(
                 ErrorCode::ProtocolMismatch,
@@ -306,6 +332,22 @@ mod tests {
         assert_eq!(
             Frame::decode(&bytes, 16).unwrap_err().code,
             ErrorCode::PayloadTooLarge
+        );
+    }
+
+    #[test]
+    fn fragment_count_is_bounded_by_the_declared_payload() {
+        let frame = Frame {
+            kind: FrameKind::Data,
+            message_id: 1,
+            fragment_index: 0,
+            fragment_count: u16::MAX,
+            total_length: 1,
+            payload: vec![1],
+        };
+        assert_eq!(
+            frame.encode(16 * 1024).unwrap_err().code,
+            ErrorCode::ProtocolMismatch
         );
     }
 }

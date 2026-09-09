@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-send-peer"
+description = "Allows sending a logical peer message."
+commands.allow = ["send_peer"]
+
+[[permission]]
+identifier = "deny-send-peer"
+description = "Denies sending peer messages."
+commands.deny = ["send_peer"]

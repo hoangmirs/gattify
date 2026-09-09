@@ -1,5 +1,4 @@
 [[set]]
 identifier = "connect"
 description = "Connect and perform GATT client procedures."
-permissions = ["allow-execute"]
-
+permissions = ["allow-execute-connect", "allow-request-connect-permission", "allow-cancel"]

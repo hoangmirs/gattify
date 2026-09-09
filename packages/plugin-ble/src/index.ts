@@ -1,5 +1,12 @@
 import { defaultBridge, type BleBridge, type Unlisten } from "./bridge.js";
-import { decodeBytes, dispatch, dispatchStatus, encodeBytes, expectReply } from "./wire.js";
+import {
+  decodeBytes,
+  dispatch,
+  dispatchStatus,
+  encodeBytes,
+  expectReply,
+  requestPermission,
+} from "./wire.js";
 import type {
   AdapterState,
   AdvertisingOptions,
@@ -109,18 +116,20 @@ class Session implements BleSession {
 
   async requestPermissions(request: PermissionRequest): Promise<PermissionState> {
     this.#assertOpen();
-    return expectReply(
-      await dispatch<PermissionState>(this.#bridge, {
-        kind: "requestPermissions",
-        payload: request,
-      }),
-      "permissions",
-    );
+    const roles = (["scan", "connect", "advertise"] as const).filter((role) => request[role]);
+    if (roles.length === 0) return this.checkPermissions();
+    let permissions: PermissionState | undefined;
+    for (const role of roles) {
+      permissions = expectReply(
+        await requestPermission<PermissionState>(this.#bridge, role),
+        "permissions",
+      );
+    }
+    return permissions as PermissionState;
   }
 
   async scan(options: Partial<ScanOptions> = {}): Promise<ScanHandle> {
     this.#assertOpen();
-    throwIfAborted(options.signal);
     const payload = expectReply<{ scanId: ScanId }>(
       await dispatch(this.#bridge, {
         kind: "startScan",
@@ -128,7 +137,7 @@ class Session implements BleSession {
           serviceUuids: options.serviceUuids ?? [],
           timeoutMs: options.timeoutMs ?? null,
         },
-      }),
+      }, { deadlineMillis: options.timeoutMs ?? undefined, signal: options.signal }),
       "scanStarted",
     );
     return new Scan(this.#bridge, payload.scanId);
@@ -136,7 +145,6 @@ class Session implements BleSession {
 
   async connect(deviceId: DeviceId, options: ConnectOptions = {}): Promise<ConnectionHandle> {
     this.#assertOpen();
-    throwIfAborted(options.signal);
     const deadline = options.timeoutMs ?? undefined;
     const payload = expectReply<Connected>(
       await dispatch(
@@ -148,7 +156,7 @@ class Session implements BleSession {
             options: { timeoutMs: options.timeoutMs ?? null },
           },
         },
-        deadline,
+        { deadlineMillis: deadline, signal: options.signal },
       ),
       "connected",
     );
@@ -384,12 +392,6 @@ class Server implements ServerHandle {
 
   #assertOpen(): void {
     if (this.#closed) throw new Error("BLE server is closed");
-  }
-}
-
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) {
-    throw new DOMException("The BLE operation was cancelled", "AbortError");
   }
 }
 

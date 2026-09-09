@@ -1,5 +1,4 @@
 [[set]]
 identifier = "scan"
 description = "Start and stop scoped BLE scans."
-permissions = ["allow-execute"]
-
+permissions = ["allow-execute-scan", "allow-request-scan-permission", "allow-cancel"]
