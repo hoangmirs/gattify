@@ -5,7 +5,9 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::{Backend, BleError, BleResult, Command, ErrorCode, OperationContext, OperationId, OwnerId, Reply};
+use crate::{
+    Backend, BleError, BleResult, Command, ErrorCode, OperationContext, OperationId, OwnerId, Reply,
+};
 
 /// Correlates every operation and attaches owner identity before reaching a backend.
 pub struct Manager<B> {
@@ -108,11 +110,7 @@ impl<B: Backend> Manager<B> {
     ///
     /// Returns [`ErrorCode::InvalidHandle`] when another owner controls the
     /// target operation, or a structured backend cancellation error.
-    pub async fn cancel(
-        &self,
-        owner_id: &OwnerId,
-        operation_id: &OperationId,
-    ) -> BleResult<Reply> {
+    pub async fn cancel(&self, owner_id: &OwnerId, operation_id: &OperationId) -> BleResult<Reply> {
         {
             let active = self.active_operations.lock();
             match active.get(operation_id) {
@@ -224,7 +222,8 @@ mod tests {
                 futures_lite::future::yield_now().await;
                 manager.cancel(&owner, &operation_id).await
             };
-            let (operation, cancellation) = futures_lite::future::zip(operation, cancellation).await;
+            let (operation, cancellation) =
+                futures_lite::future::zip(operation, cancellation).await;
             assert_eq!(operation.unwrap_err().code, ErrorCode::Cancelled);
             assert_eq!(cancellation.unwrap(), Reply::Empty);
         });
@@ -254,7 +253,8 @@ mod tests {
                 manager.cancel(&owner, &operation_id).await.unwrap();
                 error
             };
-            let (operation, cancellation) = futures_lite::future::zip(operation, cancellation).await;
+            let (operation, cancellation) =
+                futures_lite::future::zip(operation, cancellation).await;
             assert_eq!(operation.unwrap_err().code, ErrorCode::Cancelled);
             assert_eq!(cancellation.code, ErrorCode::InvalidHandle);
         });

@@ -62,11 +62,7 @@ impl<B: Backend> BleRuntime<B> {
     /// # Errors
     ///
     /// Returns an ownership or backend cancellation error.
-    pub async fn cancel(
-        &self,
-        owner_id: &OwnerId,
-        operation_id: &OperationId,
-    ) -> BleResult<Reply> {
+    pub async fn cancel(&self, owner_id: &OwnerId, operation_id: &OperationId) -> BleResult<Reply> {
         self.manager.cancel(owner_id, operation_id).await
     }
 }
@@ -80,9 +76,7 @@ impl Default for BleRuntime<SystemBackend> {
 #[cfg(feature = "tauri")]
 mod tauri_api {
     use super::{BleRuntime, SystemBackend};
-    use ble_core::{
-        BleError, BleResult, Command, OperationId, OwnerId, PermissionRequest, Reply,
-    };
+    use ble_core::{BleError, BleResult, Command, OperationId, OwnerId, PermissionRequest, Reply};
     use serde::Deserialize;
     use tauri::{
         plugin::{Builder, TauriPlugin},
@@ -113,7 +107,9 @@ mod tauri_api {
 
     fn command_has_role(command: &Command, role: CommandRole) -> bool {
         match role {
-            CommandRole::Scan => matches!(command, Command::StartScan(_) | Command::StopScan { .. }),
+            CommandRole::Scan => {
+                matches!(command, Command::StartScan(_) | Command::StopScan { .. })
+            }
             CommandRole::Connect => matches!(
                 command,
                 Command::Connect { .. }
