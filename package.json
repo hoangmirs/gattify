@@ -1,0 +1,15 @@
+{
+  "name": "tauri-ble-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.12.1",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspace packages/plugin-ble",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

@@ -1,0 +1,5 @@
+[[set]]
+identifier = "status"
+description = "Read adapter state, capabilities and permission state."
+permissions = ["allow-execute"]
+

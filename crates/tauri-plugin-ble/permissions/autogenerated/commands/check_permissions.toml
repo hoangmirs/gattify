@@ -1,0 +1,10 @@
+[[permission]]
+identifier = "allow-check-permissions"
+description = "Allows reading OS BLE permission state."
+commands.allow = ["check_permissions"]
+
+[[permission]]
+identifier = "deny-check-permissions"
+description = "Denies reading OS BLE permission state."
+commands.deny = ["check_permissions"]
+

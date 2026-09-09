@@ -1,0 +1,72 @@
+# Tauri BLE
+
+An independently implemented, MIT-licensed Tauri v2 BLE workspace for raw GATT
+operations and optional complete-message transport.
+
+This repository is an implementation-in-progress. The platform-neutral
+contracts, deterministic mock backend, TypeScript facade, and peer wire
+protocol are implemented. Android and iOS contain native state/capability
+probes. No production radio backend is currently claimed as complete. Every
+unimplemented production operation returns an explicit Unsupported error.
+
+## Packages
+
+| Package | Status | Purpose |
+| --- | --- | --- |
+| ble-core | Implemented, Rust compile pending locally | DTOs, errors, ownership, backend contract, mock |
+| ble-peer | Implemented, Rust compile pending locally | v1 frames, bounded reassembly, ACK/retry, deduplication |
+| tauri-plugin-ble | API surface implemented; native GATT backends gated | Tauri commands and native routing boundary |
+| tauri-plugin-ble-api | Implemented and tested | Framework-neutral TypeScript handles |
+| ble-secure-session | Not implemented; later S1 | Authenticated encrypted sessions |
+| ble-mesh | Not implemented; later X1 | Multi-hop routing |
+
+The npm package name is deliberately private and provisional. Select an owner
+scope and copyright holder before publishing.
+
+## Development
+
+Requirements: Node 22+, npm 11+, Rust 1.89, and platform SDKs for native builds.
+
+    npm install
+    npm test
+    cargo fmt --all --check
+    cargo test --workspace --all-features
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+A consumer registers the Rust plugin:
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_ble::init())
+        .run(tauri::generate_context!())
+        .expect("failed to run application");
+
+The frontend owns a session and closes it explicitly:
+
+    import { createBle } from "tauri-plugin-ble-api";
+
+    const ble = await createBle();
+    const capabilities = await ble.getCapabilities();
+    const scan = await ble.scan({ serviceUuids: [] });
+    // ...
+    await scan.stop();
+    await ble.close();
+
+Importing the package does not initialize Bluetooth. Raw-only consumers may
+disable the Rust peer feature. Peer imports return Unsupported unless that
+feature and a peer-capable native backend are both available.
+
+## Safety and scope
+
+The peer profile is unencrypted and unauthenticated. It is suitable only for
+public test data until a separately reviewed secure-session layer exists.
+Transport acknowledgement means the next device accepted the complete message;
+it does not mean application processing, persistence, or final-recipient
+delivery.
+
+Device identifiers are opaque runtime handles, not MAC addresses or durable
+identities. The first contract is foreground-only. Bluetooth Classic, exact
+ranging, automatic background delivery, L2CAP, mesh, and internet fallback are
+outside v0.1.
+
+See IMPLEMENTATION_STATUS.md for exact evidence and docs/support-matrix.md for
+platform claims.

@@ -1,0 +1,5 @@
+[[set]]
+identifier = "connect"
+description = "Connect and perform GATT client procedures."
+permissions = ["allow-execute"]
+

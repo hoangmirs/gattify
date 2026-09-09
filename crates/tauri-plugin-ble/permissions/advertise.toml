@@ -1,0 +1,5 @@
+[[set]]
+identifier = "advertise"
+description = "Start and stop BLE advertising."
+permissions = ["allow-execute"]
+
