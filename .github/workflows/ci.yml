@@ -24,6 +24,13 @@ jobs:
       - run: cargo test --locked --workspace --no-default-features
       - run: cargo check --locked --manifest-path fuzz/Cargo.toml
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: cargo test --locked --manifest-path examples/gattify-lab/src-tauri/Cargo.toml
 
   typescript:
     runs-on: ubuntu-latest

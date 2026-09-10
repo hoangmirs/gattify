@@ -15,4 +15,8 @@ tauri-build = { version = "2.6.3", features = [] }
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-gattify = { path = "../../../crates/tauri-plugin-gattify" }
 
+[dev-dependencies]
+serde_json = "1"
+tauri = { version = "2.11.5", features = ["test"] }
+
 [workspace]
