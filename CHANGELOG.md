@@ -6,7 +6,7 @@
 - Added workspace foundation, portable BLE contracts and deterministic mock.
 - Added bounded peer framing, reassembly, ACK/retry and deduplication logic.
 - Added private TypeScript facade with raw and peer exports.
-- Added Android and iOS native state/capability probes.
+- Added Android and iOS native adapter-state reads.
 - Added documentation, policy, examples and honest platform gates.
 - Added the plugin build script and the Tauri native project layout.
 - Added a native execute bridge on Android and iOS for status commands.

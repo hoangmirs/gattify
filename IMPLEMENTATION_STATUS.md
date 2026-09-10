@@ -51,6 +51,8 @@ Updated: 10 September 2026
 - cargo clippy --workspace --all-targets --all-features -- -D warnings:
   passed, cargo 1.89.0 on aarch64-apple-darwin.
 - CI compiled the Android lab app and the iOS plugin build: https://github.com/hoangmirs/gattify/actions/runs/34484003162
+- The ios CI job compiles the crate with `unsafe_code = "forbid"`, so the
+  iOS plugin binding needs no lint exception.
 
 ## Not verified in this environment
 
@@ -81,5 +83,6 @@ Unsupported for radio operations. It never substitutes the mock backend.
 
 ## Next step
 
-Install the platform SDKs, then implement Android central/peripheral operations
-behind the Backend contract before claiming mobile support.
+Sub-project 2 of docs/superpowers/specs/2026-09-10-gattify-design.md: the
+event path, the peer driver and the service-UUID scope, tested against the
+mock backend.

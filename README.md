@@ -5,8 +5,9 @@ complete-message transport.
 
 This repository is an implementation-in-progress. The platform-neutral
 contracts, deterministic mock backend, TypeScript facade, and peer wire
-protocol are implemented. Android and iOS contain native state/capability
-probes. No production radio backend is currently claimed as complete. Every
+protocol are implemented. On Android and iOS, every command reaches native
+code, which reads adapter state and reports capabilities as unknown. No
+production radio backend is currently claimed as complete. Every
 unimplemented production operation returns an explicit Unsupported error.
 
 ## Packages
