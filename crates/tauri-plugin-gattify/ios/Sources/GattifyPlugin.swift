@@ -42,6 +42,7 @@ final class GattifyPlugin: Plugin {
 
   // Reads the authorization without a manager. Creating a CBCentralManager shows the Bluetooth prompt.
   private func adapterState() -> String {
+    guard #available(iOS 13.1, *) else { return "unknown" }
     switch CBManager.authorization {
     case .denied, .restricted:
       return "unauthorized"
