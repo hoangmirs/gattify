@@ -1,21 +1,27 @@
-// swift-tools-version: 5.9
+// swift-tools-version:5.9
 import PackageDescription
 
 let package = Package(
-  name: "TauriPluginBle",
-  platforms: [.iOS(.v15)],
+  name: "tauri-plugin-gattify",
+  platforms: [
+    .macOS(.v10_15),
+    .iOS(.v15),
+  ],
   products: [
-    .library(name: "TauriPluginBle", targets: ["TauriPluginBle"]),
+    .library(
+      name: "tauri-plugin-gattify",
+      type: .static,
+      targets: ["tauri-plugin-gattify"])
   ],
   dependencies: [
-    .package(url: "https://github.com/tauri-apps/tauri-swift", from: "2.0.0"),
+    .package(name: "Tauri", path: "../.tauri/tauri-api")
   ],
   targets: [
     .target(
-      name: "TauriPluginBle",
-      dependencies: [.product(name: "Tauri", package: "tauri-swift")],
-      path: "Sources"
-    ),
+      name: "tauri-plugin-gattify",
+      dependencies: [
+        .byName(name: "Tauri")
+      ],
+      path: "Sources")
   ]
 )
-

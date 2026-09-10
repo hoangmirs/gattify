@@ -5,3 +5,6 @@
 .DS_Store
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+.tauri/
+/crates/tauri-plugin-gattify/android/build/
+/crates/tauri-plugin-gattify/ios/.build/

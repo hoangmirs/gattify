@@ -2,8 +2,8 @@ import CoreBluetooth
 import Tauri
 import WebKit
 
-final class BlePlugin: Plugin {
-  private let queue = DispatchQueue(label: "dev.taurible.plugin.corebluetooth")
+final class GattifyPlugin: Plugin {
+  private let queue = DispatchQueue(label: "dev.gattify.plugin.corebluetooth")
   private var central: CBCentralManager?
   private var peripheral: CBPeripheralManager?
 
@@ -41,8 +41,8 @@ final class BlePlugin: Plugin {
   }
 }
 
-@_cdecl("init_plugin_ble")
+@_cdecl("init_plugin_gattify")
 public func initPlugin() -> Plugin {
-  BlePlugin()
+  GattifyPlugin()
 }
 

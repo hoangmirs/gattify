@@ -1,9 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
 [[permission]]
 identifier = "allow-execute-connect"
-description = "Allows BLE connections and GATT client procedures."
+description = "Enables the execute_connect command without any pre-configured scope."
 commands.allow = ["execute_connect"]
 
 [[permission]]
 identifier = "deny-execute-connect"
-description = "Denies BLE connections and GATT client procedures."
+description = "Denies the execute_connect command without any pre-configured scope."
 commands.deny = ["execute_connect"]

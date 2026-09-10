@@ -1,11 +1,11 @@
 plugins {
-  id("com.android.library") version "8.9.1"
-  kotlin("android") version "2.1.20"
+  id("com.android.library")
+  id("org.jetbrains.kotlin.android")
 }
 
 android {
-  namespace = "dev.taurible.plugin"
-  compileSdk = 35
+  namespace = "dev.gattify.plugin"
+  compileSdk = 36
 
   defaultConfig {
     minSdk = 26
@@ -21,7 +21,5 @@ android {
 }
 
 dependencies {
-  implementation("androidx.annotation:annotation:1.9.1")
-  compileOnly("app.tauri:tauri-android:2.11.0")
+  implementation(project(":tauri-android"))
 }
-

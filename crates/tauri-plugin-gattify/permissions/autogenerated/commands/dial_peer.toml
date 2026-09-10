@@ -1,9 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
 [[permission]]
 identifier = "allow-dial-peer"
-description = "Allows connecting a peer endpoint to a discovered device."
+description = "Enables the dial_peer command without any pre-configured scope."
 commands.allow = ["dial_peer"]
 
 [[permission]]
 identifier = "deny-dial-peer"
-description = "Denies connecting a peer endpoint."
+description = "Denies the dial_peer command without any pre-configured scope."
 commands.deny = ["dial_peer"]

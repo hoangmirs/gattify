@@ -1,4 +1,4 @@
-package dev.taurible.plugin
+package dev.gattify.plugin
 
 import android.Manifest
 import android.app.Activity
@@ -26,7 +26,7 @@ import app.tauri.plugin.Plugin
     ),
   ],
 )
-class BlePlugin(private val activity: Activity) : Plugin(activity) {
+class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
   private val adapter: BluetoothAdapter?
     get() = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
 
