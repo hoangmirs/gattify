@@ -66,13 +66,13 @@ jobs:
       - run: npm run build
       - name: Generate the lab app's Android project
         run: npm run tauri --workspace examples/gattify-lab -- android init --ci --skip-targets-install
-      - name: Run the plugin's Kotlin unit tests
-        working-directory: examples/gattify-lab/src-tauri/gen/android
-        run: ./gradlew :tauri-plugin-gattify:testDebugUnitTest
       - name: Build the lab app for Android
         run: |
           if [ -n "${ANDROID_NDK_HOME:-}" ]; then export NDK_HOME="$ANDROID_NDK_HOME"; fi
           npm run tauri --workspace examples/gattify-lab -- android build --ci --debug --apk --target aarch64
+      - name: Run the plugin's Kotlin unit tests
+        working-directory: examples/gattify-lab/src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-gattify:testDebugUnitTest
 
   ios:
     if: github.event_name != 'push'
@@ -101,4 +101,4 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Fuzz frame decoding for 60 seconds
-        run: cargo +nightly fuzz run --fuzz-dir fuzz frame_decode -- -max_total_time=60
+        run: cargo +nightly fuzz run --fuzz-dir fuzz --target x86_64-unknown-linux-gnu frame_decode -- -max_total_time=60
