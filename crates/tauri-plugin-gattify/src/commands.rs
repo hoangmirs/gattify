@@ -21,7 +21,7 @@ struct CancelRequest {
     operation_id: OperationId,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CommandRole {
     Scan,
     Connect,
@@ -302,4 +302,139 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             close_endpoint
         ])
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        AdvertisingOptions, CharacteristicHandle, ConnectOptions, ConnectionId, DeviceId, PeerId,
+        ScanId, ScanOptions, ServerDefinition, ServerId, SubscriptionId, WriteType,
+    };
+
+    fn expected_role(command: &Command) -> Option<CommandRole> {
+        match command {
+            Command::StartScan(_) | Command::StopScan { .. } => Some(CommandRole::Scan),
+            Command::Connect { .. }
+            | Command::Disconnect { .. }
+            | Command::DiscoverServices { .. }
+            | Command::Read { .. }
+            | Command::Write { .. }
+            | Command::Subscribe { .. }
+            | Command::Unsubscribe { .. } => Some(CommandRole::Connect),
+            Command::CreateServer(_)
+            | Command::CloseServer { .. }
+            | Command::SetValue { .. }
+            | Command::Notify { .. } => Some(CommandRole::Server),
+            Command::StartAdvertising { .. } | Command::StopAdvertising { .. } => {
+                Some(CommandRole::Advertise)
+            }
+            Command::GetState
+            | Command::GetCapabilities
+            | Command::CheckPermissions
+            | Command::RequestPermissions(_)
+            | Command::Cancel { .. }
+            | Command::CloseOwner
+            | Command::DebugResources => None,
+        }
+    }
+
+    fn every_command() -> Vec<Command> {
+        vec![
+            Command::GetState,
+            Command::GetCapabilities,
+            Command::CheckPermissions,
+            Command::RequestPermissions(PermissionRequest {
+                scan: true,
+                connect: false,
+                advertise: false,
+            }),
+            Command::StartScan(ScanOptions {
+                service_uuids: Vec::new(),
+                timeout_ms: None,
+            }),
+            Command::StopScan {
+                scan_id: ScanId::new("scan-1"),
+            },
+            Command::Connect {
+                device_id: DeviceId::new("device-1"),
+                options: ConnectOptions { timeout_ms: None },
+            },
+            Command::Disconnect {
+                connection_id: ConnectionId::new("connection-1"),
+            },
+            Command::DiscoverServices {
+                connection_id: ConnectionId::new("connection-1"),
+            },
+            Command::Read {
+                connection_id: ConnectionId::new("connection-1"),
+                characteristic: CharacteristicHandle::new("characteristic-1"),
+            },
+            Command::Write {
+                connection_id: ConnectionId::new("connection-1"),
+                characteristic: CharacteristicHandle::new("characteristic-1"),
+                value_base64: "AA==".into(),
+                write_type: WriteType::WithResponse,
+            },
+            Command::Subscribe {
+                connection_id: ConnectionId::new("connection-1"),
+                characteristic: CharacteristicHandle::new("characteristic-1"),
+            },
+            Command::Unsubscribe {
+                subscription_id: SubscriptionId::new("subscription-1"),
+            },
+            Command::CreateServer(ServerDefinition {
+                services: Vec::new(),
+            }),
+            Command::CloseServer {
+                server_id: ServerId::new("server-1"),
+            },
+            Command::StartAdvertising {
+                server_id: ServerId::new("server-1"),
+                options: AdvertisingOptions {
+                    service_uuid: "180d".into(),
+                    local_name: None,
+                    local_name_optional: false,
+                },
+            },
+            Command::StopAdvertising {
+                server_id: ServerId::new("server-1"),
+            },
+            Command::SetValue {
+                server_id: ServerId::new("server-1"),
+                characteristic_key: "characteristic-1".into(),
+                value_base64: "AA==".into(),
+            },
+            Command::Notify {
+                server_id: ServerId::new("server-1"),
+                peer_id: PeerId::new("peer-1"),
+                characteristic_key: "characteristic-1".into(),
+                value_base64: "AA==".into(),
+            },
+            Command::Cancel {
+                operation_id: OperationId::new("operation-1"),
+            },
+            Command::CloseOwner,
+            Command::DebugResources,
+        ]
+    }
+
+    #[test]
+    fn each_command_passes_only_its_own_role_endpoint() {
+        let roles = [
+            CommandRole::Scan,
+            CommandRole::Connect,
+            CommandRole::Server,
+            CommandRole::Advertise,
+        ];
+        for command in every_command() {
+            for role in roles {
+                assert_eq!(
+                    command_has_role(&command, role),
+                    expected_role(&command) == Some(role),
+                    "command {command:?} against role {role:?}"
+                );
+            }
+        }
+    }
 }
