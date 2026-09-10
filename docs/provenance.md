@@ -12,6 +12,7 @@ this repository. No third-party code is copied here.
 | https://developer.apple.com/documentation/corebluetooth | 2026-09-08 | CoreBluetooth state and manager APIs | Apple developer documentation terms | No | Link only |
 | https://learn.microsoft.com/en-us/windows/apps/develop/devices-sensors/gatt-server | 2026-09-08 | Windows GATT server feasibility | Microsoft documentation terms | No | Link only |
 | https://bluez.readthedocs.io/en/latest/gatt-api/ | 2026-09-08 | BlueZ exported GATT model | Documentation terms | No | Link only |
+| tauri 2.11.5 crate source: `src/ipc/channel.rs`, `src/plugin/mobile.rs`, `mobile/*/Channel.*` | 2026-09-10 | Whether a channel from `Channel::new` receives native messages | Apache-2.0 OR MIT | No | Link only |
 
 Dependency versions are recorded in Cargo.lock and package-lock.json after
 resolution. THIRD_PARTY_NOTICES.md records direct dependency licenses. Release
