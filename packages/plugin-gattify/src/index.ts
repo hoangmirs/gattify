@@ -175,7 +175,7 @@ class Session implements BleSession {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    await this.#bridge.invoke("plugin:ble|close");
+    await this.#bridge.invoke("plugin:gattify|close");
   }
 
   #assertOpen(): void {
@@ -193,7 +193,7 @@ class Scan implements ScanHandle {
     private readonly bridge: BleBridge,
     readonly id: ScanId,
   ) {
-    this.#unlisten = subscribe<DiscoveredDevice>(bridge, "ble://scan-result", (device) => {
+    this.#unlisten = subscribe<DiscoveredDevice>(bridge, "gattify://scan-result", (device) => {
       if (device.scanId !== this.id) return;
       this.#devices.set(device.id, device);
       for (const callback of this.#callbacks) callback(device);
@@ -300,7 +300,7 @@ class Subscription implements SubscriptionHandle {
   ) {
     this.#unlisten = subscribe<{ subscriptionId: SubscriptionId; valueBase64: string }>(
       bridge,
-      "ble://characteristic-value",
+      "gattify://characteristic-value",
       (received) => {
         if (received.subscriptionId !== this.id) return;
         const value = decodeBytes(received.valueBase64);

@@ -50,7 +50,7 @@ export async function dispatch<T>(
   throwIfAborted(options.signal);
   const operationId = allocateOperationId();
   const invocation = bridge
-    .invoke<Reply<T>>("plugin:ble|" + commandEndpoint(command), {
+    .invoke<Reply<T>>("plugin:gattify|" + commandEndpoint(command), {
       request: {
         operationId,
         command,
@@ -65,7 +65,7 @@ export async function dispatch<T>(
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = () => {
       void bridge
-        .invoke("plugin:ble|cancel", { request: { operationId } })
+        .invoke("plugin:gattify|cancel", { request: { operationId } })
         .catch(() => undefined);
       reject(new DOMException("The BLE operation was cancelled", "AbortError"));
     };
@@ -83,7 +83,7 @@ export async function dispatchStatus<T>(
   command: "get_state" | "get_capabilities" | "check_permissions",
 ): Promise<Reply<T>> {
   try {
-    return await bridge.invoke<Reply<T>>("plugin:ble|" + command);
+    return await bridge.invoke<Reply<T>>("plugin:gattify|" + command);
   } catch (error) {
     throwBridgeError(error);
   }
@@ -94,7 +94,7 @@ export async function requestPermission<T>(
   role: "scan" | "connect" | "advertise",
 ): Promise<Reply<T>> {
   try {
-    return await bridge.invoke<Reply<T>>(`plugin:ble|request_${role}_permission`);
+    return await bridge.invoke<Reply<T>>(`plugin:gattify|request_${role}_permission`);
   } catch (error) {
     throwBridgeError(error);
   }

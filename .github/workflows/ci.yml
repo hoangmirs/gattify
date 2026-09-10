@@ -32,5 +32,5 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
-      - run: npm pack --workspace packages/plugin-ble --dry-run
-      - run: cmp LICENSE packages/plugin-ble/LICENSE
+      - run: npm pack --workspace packages/plugin-gattify --dry-run
+      - run: cmp LICENSE packages/plugin-gattify/LICENSE

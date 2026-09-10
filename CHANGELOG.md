@@ -2,6 +2,7 @@
 
 ## 0.1.0 - Unreleased
 
+- Renamed the project to gattify and merged the Rust crates into `tauri-plugin-gattify`.
 - Added workspace foundation, portable BLE contracts and deterministic mock.
 - Added bounded peer framing, reassembly, ACK/retry and deduplication logic.
 - Added private TypeScript facade with raw and peer exports.

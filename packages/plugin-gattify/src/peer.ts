@@ -33,7 +33,7 @@ export interface PeerOptions {
 export async function createEndpoint(options: PeerOptions): Promise<Endpoint> {
   const bridge = options.bridge ?? (await defaultBridge());
   try {
-    const result = await bridge.invoke<{ endpointId: string }>("plugin:ble|create_endpoint", {
+    const result = await bridge.invoke<{ endpointId: string }>("plugin:gattify|create_endpoint", {
       options: {
         serviceUuid: options.serviceUuid,
         localName: options.localName ?? null,
@@ -63,7 +63,7 @@ class EndpointHandle implements Endpoint {
   ) {
     this.#unlisten = subscribe<{ endpointId: string; peerId: PeerId }>(
       bridge,
-      "ble://peer-ready",
+      "gattify://peer-ready",
       (ready) => {
         if (ready.endpointId !== this.endpointId) return;
         const peer = new PeerHandle(this.bridge, ready.peerId);
@@ -73,7 +73,7 @@ class EndpointHandle implements Endpoint {
   }
 
   async dial(deviceId: DeviceId): Promise<Peer> {
-    const result = await this.bridge.invoke<{ peerId: PeerId }>("plugin:ble|dial_peer", {
+    const result = await this.bridge.invoke<{ peerId: PeerId }>("plugin:gattify|dial_peer", {
       endpointId: this.endpointId,
       deviceId,
     });
@@ -89,7 +89,7 @@ class EndpointHandle implements Endpoint {
     if (this.#closed) return;
     this.#closed = true;
     this.#unlisten();
-    await this.bridge.invoke("plugin:ble|close_endpoint", { endpointId: this.endpointId });
+    await this.bridge.invoke("plugin:gattify|close_endpoint", { endpointId: this.endpointId });
   }
 }
 
@@ -104,7 +104,7 @@ class PeerHandle implements Peer {
   ) {
     this.#unlisten = subscribe<{ peerId: PeerId; valueBase64: string }>(
       bridge,
-      "ble://peer-message",
+      "gattify://peer-message",
       (message) => {
         if (message.peerId !== this.id) return;
         const bytes = decodeBytes(message.valueBase64);
@@ -120,7 +120,7 @@ class PeerHandle implements Peer {
     if (options.signal?.aborted) {
       return Promise.reject(new DOMException("The peer send was cancelled", "AbortError"));
     }
-    return this.bridge.invoke("plugin:ble|send_peer", {
+    return this.bridge.invoke("plugin:gattify|send_peer", {
       peerId: this.id,
       valueBase64: encodeBytes(bytes),
       timeoutMs: options.timeoutMs ?? 30_000,
@@ -136,7 +136,7 @@ class PeerHandle implements Peer {
     if (this.#closed) return;
     this.#closed = true;
     this.#unlisten();
-    await this.bridge.invoke("plugin:ble|close_peer", { peerId: this.id });
+    await this.bridge.invoke("plugin:gattify|close_peer", { peerId: this.id });
   }
 }
 

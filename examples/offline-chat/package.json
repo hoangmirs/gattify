@@ -1,5 +1,5 @@
 {
-  "name": "tauri-ble-offline-chat-example",
+  "name": "gattify-offline-chat-example",
   "version": "0.1.0",
   "private": true,
   "type": "module",

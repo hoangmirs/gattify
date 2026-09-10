@@ -9,8 +9,8 @@ class FakeBridge {
   async invoke(command, args) {
     this.calls.push([command, args]);
     const kind = args?.request?.command?.kind;
-    if (command === "plugin:ble|get_state") return { kind: "state", payload: "poweredOn" };
-    if (command === "plugin:ble|get_capabilities") {
+    if (command === "plugin:gattify|get_state") return { kind: "state", payload: "poweredOn" };
+    if (command === "plugin:gattify|get_capabilities") {
       const supported = { level: "supported", reason: "available", description: null };
       return {
         kind: "capabilities",
@@ -26,14 +26,14 @@ class FakeBridge {
         },
       };
     }
-    if (command.startsWith("plugin:ble|request_") && command.endsWith("_permission")) {
+    if (command.startsWith("plugin:gattify|request_") && command.endsWith("_permission")) {
       return {
         kind: "permissions",
         payload: { scan: "granted", connect: "granted", advertise: "granted" },
       };
     }
     if (kind === "startScan") return { kind: "scanStarted", payload: { scanId: "scan-1" } };
-    if (kind === "stopScan" || command === "plugin:ble|close") return { kind: "empty" };
+    if (kind === "stopScan" || command === "plugin:gattify|close") return { kind: "empty" };
     throw new Error("unexpected command " + command + " / " + kind);
   }
 }
@@ -51,7 +51,7 @@ test("session sends typed commands and close is idempotent", async () => {
   await session.close();
 
   assert.equal(
-    bridge.calls.filter(([command]) => command === "plugin:ble|close").length,
+    bridge.calls.filter(([command]) => command === "plugin:gattify|close").length,
     1,
   );
   assert.equal(
@@ -61,7 +61,7 @@ test("session sends typed commands and close is idempotent", async () => {
   const startCall = bridge.calls.find(
     ([, args]) => args?.request?.command?.kind === "startScan",
   );
-  assert.equal(startCall[0], "plugin:ble|execute_scan");
+  assert.equal(startCall[0], "plugin:gattify|execute_scan");
   assert.equal(typeof startCall[1].request.operationId, "string");
 });
 
@@ -78,7 +78,7 @@ test("permission requests use role-specific commands", async () => {
   await session.requestPermissions({ scan: true, connect: false, advertise: true });
   assert.deepEqual(
     bridge.calls.map(([command]) => command),
-    ["plugin:ble|request_scan_permission", "plugin:ble|request_advertise_permission"],
+    ["plugin:gattify|request_scan_permission", "plugin:gattify|request_advertise_permission"],
   );
 });
 
@@ -87,7 +87,7 @@ test("aborting a live operation invokes native cancellation", async () => {
   const bridge = {
     invoke(command, args) {
       calls.push([command, args]);
-      if (command === "plugin:ble|cancel") return Promise.resolve({ kind: "empty" });
+      if (command === "plugin:gattify|cancel") return Promise.resolve({ kind: "empty" });
       return new Promise(() => {});
     },
   };
@@ -97,8 +97,8 @@ test("aborting a live operation invokes native cancellation", async () => {
   controller.abort();
   await assert.rejects(pending, { name: "AbortError" });
 
-  const execute = calls.find(([command]) => command === "plugin:ble|execute_scan");
-  const cancel = calls.find(([command]) => command === "plugin:ble|cancel");
+  const execute = calls.find(([command]) => command === "plugin:gattify|execute_scan");
+  const cancel = calls.find(([command]) => command === "plugin:gattify|cancel");
   assert.equal(cancel[1].request.operationId, execute[1].request.operationId);
 });
 
@@ -127,4 +127,19 @@ test("closing a scan before listen resolves still detaches the native listener",
   });
   await Promise.resolve();
   assert.equal(unlistened, true);
+});
+
+test("scan listens on the gattify event namespace", async () => {
+  const bridge = new FakeBridge();
+  const events = [];
+  bridge.listen = async (event) => {
+    events.push(event);
+    return () => {};
+  };
+  const session = await createBle({ bridge });
+
+  const scan = await session.scan({ serviceUuids: [] });
+  await scan.stop();
+
+  assert.deepEqual(events, ["gattify://scan-result"]);
 });

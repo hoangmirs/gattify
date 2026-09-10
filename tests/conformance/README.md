@@ -11,6 +11,7 @@ Every production backend must run the same owner/resource lifecycle suite:
 7. a stalled peer cannot block another connection indefinitely;
 8. critical event overflow fails visibly instead of dropping state.
 
-The deterministic mock exercises the portable lifecycle contract in ble-core.
+The deterministic mock exercises the portable lifecycle contract in
+tauri-plugin-gattify.
 Hardware runners must write dated evidence under docs/platforms/test-results.
 
