@@ -85,6 +85,12 @@ jobs:
           targets: aarch64-apple-ios
       - name: Compile the plugin and its Swift package for iOS
         run: cargo build --locked -p tauri-plugin-gattify --target aarch64-apple-ios
+      - name: Run the plugin's Swift unit tests on a simulator
+        working-directory: crates/tauri-plugin-gattify/ios
+        run: |
+          xcodebuild -list
+          UDID=$(xcrun simctl list devices available --json | python3 -c 'import json, sys; devices = json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime, ds in devices.items() if "iOS" in runtime for d in ds if d["name"].startswith("iPhone")))')
+          xcodebuild test -scheme tauri-plugin-gattify -destination "id=$UDID" -skipPackagePluginValidation
 
   fuzz:
     runs-on: ubuntu-latest
