@@ -8,3 +8,5 @@
 .tauri/
 /crates/tauri-plugin-gattify/android/build/
 /crates/tauri-plugin-gattify/ios/.build/
+/examples/gattify-lab/src-tauri/target/
+/examples/gattify-lab/src-tauri/gen/

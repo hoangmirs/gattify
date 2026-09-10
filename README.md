@@ -60,6 +60,10 @@ cancellation command using the same operation ID. A backend may be unable to
 interrupt an OS procedure immediately; late completions must still be ignored
 and cleaned up by that backend.
 
+The lab app in examples/gattify-lab shows adapter state and capabilities.
+Run it on the desktop with `npm run tauri --workspace examples/gattify-lab -- dev`
+after `npm run build`.
+
 ## Safety and scope
 
 The peer profile is unencrypted and unauthenticated. It is suitable only for
