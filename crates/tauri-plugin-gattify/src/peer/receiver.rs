@@ -4,9 +4,9 @@ use std::{
     time::Instant,
 };
 
-use ble_core::{BleError, BleResult, ErrorCode};
+use crate::{BleError, BleResult, ErrorCode};
 
-use crate::{Frame, FrameKind};
+use crate::peer::{Frame, FrameKind};
 
 #[derive(Clone, Debug)]
 pub struct ReceiverLimits {
@@ -348,7 +348,7 @@ impl Default for Receiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fragment;
+    use crate::peer::fragment;
 
     #[test]
     fn accepts_only_after_complete_reassembly() {

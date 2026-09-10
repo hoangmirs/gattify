@@ -1,5 +1,5 @@
 [package]
-name = "ble-peer-fuzz"
+name = "gattify-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -8,7 +8,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-ble-peer = { path = "../crates/ble-peer" }
+tauri-plugin-gattify = { path = "../crates/tauri-plugin-gattify", default-features = false }
 libfuzzer-sys = "0.4.9"
 
 [[bin]]
@@ -19,4 +19,3 @@ doc = false
 bench = false
 
 [workspace]
-

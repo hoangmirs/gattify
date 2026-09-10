@@ -1,6 +1,6 @@
 # ADR-001: Foundation versions and backend boundary
 
-Status: accepted for initial implementation
+Status: accepted for initial implementation. ADR-002 replaces its crate layout and its desktop backend plan.
 Date: 2026-09-08
 
 ## Decision

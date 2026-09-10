@@ -1,24 +1,37 @@
-//! Tauri BLE plugin entry point.
+//! Entry point of the gattify Tauri plugin.
 //!
 //! Platform adapters are capability-gated. Operations with no verified backend
 //! return Unsupported; the deterministic mock is available only through the
 //! explicit mock feature and is never selected by init.
 
+mod backend;
+mod error;
+mod manager;
+#[cfg(any(test, feature = "mock"))]
+mod mock;
+mod model;
+pub mod peer;
 mod system;
 
 use std::sync::Arc;
 
-use ble_core::{Backend, BleResult, Command, Manager, OperationId, OwnerId, Reply};
+pub use backend::{Backend, Command, Event, OperationContext, Reply};
+pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
+pub use manager::Manager;
+#[cfg(feature = "mock")]
+pub use mock::MockBackend;
+pub use model::*;
 use system::SystemBackend;
 
 #[derive(Clone)]
-pub struct BleRuntime<B: Backend> {
-    manager: Arc<Manager<B>>,
+pub struct BleRuntime {
+    manager: Arc<Manager<Arc<dyn Backend>>>,
 }
 
-impl<B: Backend> BleRuntime<B> {
+impl BleRuntime {
     #[must_use]
-    pub fn new(backend: B) -> Self {
+    pub fn new(backend: impl Backend) -> Self {
+        let backend: Arc<dyn Backend> = Arc::new(backend);
         Self {
             manager: Arc::new(Manager::new(backend)),
         }
@@ -67,7 +80,7 @@ impl<B: Backend> BleRuntime<B> {
     }
 }
 
-impl Default for BleRuntime<SystemBackend> {
+impl Default for BleRuntime {
     fn default() -> Self {
         Self::new(SystemBackend)
     }
@@ -75,8 +88,8 @@ impl Default for BleRuntime<SystemBackend> {
 
 #[cfg(feature = "tauri")]
 mod tauri_api {
-    use super::{BleRuntime, SystemBackend};
-    use ble_core::{BleError, BleResult, Command, OperationId, OwnerId, PermissionRequest, Reply};
+    use super::BleRuntime;
+    use crate::{BleError, BleResult, Command, OperationId, OwnerId, PermissionRequest, Reply};
     use serde::Deserialize;
     use tauri::{
         plugin::{Builder, TauriPlugin},
@@ -136,13 +149,13 @@ mod tauri_api {
 
     async fn execute_request<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: ExecuteRequest,
         role: CommandRole,
     ) -> BleResult<Reply> {
         if !command_has_role(&request.command, role) {
             return Err(BleError::new(
-                ble_core::ErrorCode::InvalidArgument,
+                crate::ErrorCode::InvalidArgument,
                 "command is not permitted through this role-specific endpoint",
             ));
         }
@@ -159,7 +172,7 @@ mod tauri_api {
     #[tauri::command]
     async fn execute_scan<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: ExecuteRequest,
     ) -> BleResult<Reply> {
         execute_request(webview, state, request, CommandRole::Scan).await
@@ -168,7 +181,7 @@ mod tauri_api {
     #[tauri::command]
     async fn execute_connect<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: ExecuteRequest,
     ) -> BleResult<Reply> {
         execute_request(webview, state, request, CommandRole::Connect).await
@@ -177,7 +190,7 @@ mod tauri_api {
     #[tauri::command]
     async fn execute_server<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: ExecuteRequest,
     ) -> BleResult<Reply> {
         execute_request(webview, state, request, CommandRole::Server).await
@@ -186,7 +199,7 @@ mod tauri_api {
     #[tauri::command]
     async fn execute_advertise<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: ExecuteRequest,
     ) -> BleResult<Reply> {
         execute_request(webview, state, request, CommandRole::Advertise).await
@@ -194,7 +207,7 @@ mod tauri_api {
 
     async fn request_permission<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: PermissionRequest,
     ) -> BleResult<Reply> {
         state
@@ -205,7 +218,7 @@ mod tauri_api {
     #[tauri::command]
     async fn request_scan_permission<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         request_permission(
             webview,
@@ -222,7 +235,7 @@ mod tauri_api {
     #[tauri::command]
     async fn request_connect_permission<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         request_permission(
             webview,
@@ -239,7 +252,7 @@ mod tauri_api {
     #[tauri::command]
     async fn request_advertise_permission<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         request_permission(
             webview,
@@ -256,7 +269,7 @@ mod tauri_api {
     #[tauri::command]
     async fn cancel<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
         request: CancelRequest,
     ) -> BleResult<Reply> {
         state.cancel(&owner(&webview), &request.operation_id).await
@@ -265,7 +278,7 @@ mod tauri_api {
     #[tauri::command]
     async fn get_state<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         state
             .execute(owner(&webview), Command::GetState, None)
@@ -275,7 +288,7 @@ mod tauri_api {
     #[tauri::command]
     async fn get_capabilities<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         state
             .execute(owner(&webview), Command::GetCapabilities, None)
@@ -285,7 +298,7 @@ mod tauri_api {
     #[tauri::command]
     async fn check_permissions<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         state
             .execute(owner(&webview), Command::CheckPermissions, None)
@@ -295,7 +308,7 @@ mod tauri_api {
     #[tauri::command]
     async fn close<R: Runtime>(
         webview: Webview<R>,
-        state: State<'_, BleRuntime<SystemBackend>>,
+        state: State<'_, BleRuntime>,
     ) -> BleResult<Reply> {
         state
             .execute(owner(&webview), Command::CloseOwner, None)
@@ -341,9 +354,9 @@ mod tauri_api {
 
     #[must_use]
     pub fn init<R: Runtime>() -> TauriPlugin<R> {
-        Builder::new("ble")
+        Builder::new("gattify")
             .setup(|app, _api| {
-                app.manage(BleRuntime::<SystemBackend>::default());
+                app.manage(BleRuntime::default());
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
@@ -372,7 +385,18 @@ mod tauri_api {
 #[cfg(feature = "tauri")]
 pub use tauri_api::init;
 
-#[cfg(feature = "mock")]
-pub mod testing {
-    pub use ble_core::MockBackend;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_runs_commands_through_a_type_erased_backend() {
+        let runtime: BleRuntime = BleRuntime::new(mock::MockBackend::default());
+        let reply = futures_lite::future::block_on(runtime.execute(
+            OwnerId::new("webview:main"),
+            Command::GetState,
+            None,
+        ));
+        assert_eq!(reply, Ok(Reply::State(AdapterState::PoweredOn)));
+    }
 }

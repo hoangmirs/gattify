@@ -1,4 +1,4 @@
-use ble_core::{BleError, BleResult, ErrorCode};
+use crate::{BleError, BleResult, ErrorCode};
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_MAJOR: u8 = 1;

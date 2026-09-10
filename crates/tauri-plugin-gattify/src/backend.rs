@@ -170,6 +170,13 @@ pub trait Backend: Send + Sync + 'static {
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply>;
 }
 
+#[async_trait]
+impl Backend for std::sync::Arc<dyn Backend> {
+    async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply> {
+        self.as_ref().execute(context, command).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

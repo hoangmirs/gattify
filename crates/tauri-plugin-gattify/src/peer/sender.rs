@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
-use ble_core::{BleError, BleResult, DeliveryOutcome, ErrorCode};
+use crate::{BleError, BleResult, DeliveryOutcome, ErrorCode};
 
-use crate::{fragment, FrameKind};
+use crate::peer::{fragment, FrameKind};
 
 #[derive(Clone, Debug)]
 pub struct SendLimits {

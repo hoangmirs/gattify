@@ -1,8 +1,8 @@
-use async_trait::async_trait;
-use ble_core::{
+use crate::{
     AdapterState, Backend, BleError, BleResult, Capabilities, Command, OperationContext,
     PermissionOutcome, PermissionState, Reply, Support,
 };
+use async_trait::async_trait;
 
 /// Production backend gate.
 ///
@@ -56,11 +56,11 @@ mod tests {
         let capabilities = unverified_capabilities();
         assert!(matches!(
             capabilities.central.level,
-            ble_core::SupportLevel::Unknown
+            crate::SupportLevel::Unknown
         ));
         assert!(matches!(
             capabilities.targeted_notify.level,
-            ble_core::SupportLevel::Unknown
+            crate::SupportLevel::Unknown
         ));
     }
 }

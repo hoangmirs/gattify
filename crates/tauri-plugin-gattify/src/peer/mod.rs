@@ -1,6 +1,6 @@
 //! Versioned complete-message transport over constrained GATT values.
 //!
-//! This crate performs no radio I/O. Callers submit the returned frames using a
+//! This module performs no radio I/O. Callers submit the returned frames using a
 //! targeted GATT write or notification and feed received values into Receiver.
 
 mod frame;

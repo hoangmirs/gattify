@@ -127,27 +127,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ble-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "futures-lite",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "ble-peer"
-version = "0.1.0"
-dependencies = [
- "ble-core",
- "serde",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2733,14 +2712,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-plugin-ble"
+name = "tauri-plugin-gattify"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "ble-core",
+ "base64 0.22.1",
+ "futures-lite",
+ "parking_lot",
  "serde",
  "serde_json",
  "tauri",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
