@@ -22,6 +22,13 @@ let package = Package(
       dependencies: [
         .byName(name: "Tauri")
       ],
-      path: "Sources")
+      path: "Sources"),
+    .testTarget(
+      name: "tauri-plugin-gattify-tests",
+      dependencies: [
+        "tauri-plugin-gattify",
+        .byName(name: "Tauri"),
+      ],
+      path: "Tests")
   ]
 )

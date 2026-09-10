@@ -15,29 +15,12 @@ final class GattifyPlugin: Plugin {
 
   @objc public func execute(_ invoke: Invoke) throws {
     let command = try invoke.getArgs()["command"] as? JSObject
-    let kind = command?["kind"] as? String
-    switch kind {
-    case "getState":
-      invoke.resolve(reply("state", adapterState()))
-    case "getCapabilities":
-      invoke.resolve(reply("capabilities", capabilities()))
-    case "checkPermissions":
-      invoke.resolve(
-        reply("permissions", ["scan": "unknown", "connect": "unknown", "advertise": "unknown"]))
-    case "cancel", "closeOwner":
-      invoke.resolve(reply("empty"))
-    default:
-      invoke.reject(
-        "the iOS backend does not implement \(kind ?? "this command") yet", code: "unsupported")
+    switch executeResult(kind: command?["kind"] as? String, adapterState: { self.adapterState() }) {
+    case .resolve(let reply):
+      invoke.resolve(reply)
+    case .reject(let message, let code):
+      invoke.reject(message, code: code)
     }
-  }
-
-  private func reply(_ kind: String, _ payload: Any? = nil) -> JsonObject {
-    var reply: JsonObject = ["kind": kind]
-    if let payload {
-      reply["payload"] = payload
-    }
-    return reply
   }
 
   // Reads the authorization without a manager. Creating a CBCentralManager shows the Bluetooth prompt.
@@ -49,18 +32,6 @@ final class GattifyPlugin: Plugin {
     default:
       return "unknown"
     }
-  }
-
-  private func capabilities() -> JsonObject {
-    let notImplemented: JsonObject = ["level": "unknown", "reason": "backendNotImplemented"]
-    return [
-      "central": notImplemented,
-      "peripheral": notImplemented,
-      "advertising": notImplemented,
-      "targetedNotify": notImplemented,
-      "simultaneousRoles": notImplemented,
-      "background": ["level": "unsupported", "reason": "foregroundOnlyContract"] as JsonObject,
-    ]
   }
 }
 
