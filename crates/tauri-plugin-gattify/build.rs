@@ -1,3 +1,4 @@
+// Never list a native command such as execute here: its permission would let a webview reach native code past the Rust owner and role checks.
 #[cfg(feature = "tauri")]
 const COMMANDS: &[&str] = &[
     "execute_scan",

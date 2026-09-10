@@ -37,7 +37,7 @@ class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
   private var events: Channel? = null
 
   private val adapter: BluetoothAdapter?
-    get() = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+    get() = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
   @Command
   fun setEventChannel(invoke: Invoke) {
