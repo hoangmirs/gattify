@@ -1,43 +1,65 @@
 import CoreBluetooth
 import Tauri
-import WebKit
+
+struct SetEventChannelArgs: Decodable {
+  let channel: Channel
+}
 
 final class GattifyPlugin: Plugin {
-  private let queue = DispatchQueue(label: "dev.gattify.plugin.corebluetooth")
-  private var central: CBCentralManager?
-  private var peripheral: CBPeripheralManager?
+  private var events: Channel?
 
-  @objc override public func load(webview: WKWebView) {
-    central = CBCentralManager(delegate: nil, queue: queue)
-    peripheral = CBPeripheralManager(delegate: nil, queue: queue)
+  @objc public func setEventChannel(_ invoke: Invoke) throws {
+    events = try invoke.parseArgs(SetEventChannelArgs.self).channel
+    invoke.resolve()
   }
 
-  @objc public func getState(_ invoke: Invoke) {
-    let value: String
-    switch central?.state ?? .unknown {
-    case .poweredOn: value = "poweredOn"
-    case .poweredOff: value = "poweredOff"
-    case .unauthorized: value = "unauthorized"
-    case .unsupported: value = "unavailable"
-    case .resetting: value = "resetting"
-    default: value = "unknown"
+  @objc public func execute(_ invoke: Invoke) throws {
+    let command = try invoke.getArgs()["command"] as? JSObject
+    let kind = command?["kind"] as? String
+    switch kind {
+    case "getState":
+      invoke.resolve(reply("state", adapterState()))
+    case "getCapabilities":
+      invoke.resolve(reply("capabilities", capabilities()))
+    case "checkPermissions":
+      invoke.resolve(
+        reply("permissions", ["scan": "unknown", "connect": "unknown", "advertise": "unknown"]))
+    case "cancel", "closeOwner":
+      invoke.resolve(reply("empty"))
+    default:
+      invoke.reject(
+        "the iOS backend does not implement \(kind ?? "this command") yet", code: "unsupported")
     }
-    invoke.resolve(["state": value])
   }
 
-  @objc public func getCapabilities(_ invoke: Invoke) {
-    invoke.resolve([
-      "central": support("unknown", "requiresPoweredOnRuntimeProbe"),
-      "peripheral": support("unknown", "requiresPoweredOnRuntimeProbe"),
-      "advertising": support("unknown", "requiresAdvertisementCallback"),
-      "targetedNotify": support("unknown", "requiresSubscriberIsolationQualification"),
-      "simultaneousRoles": support("unknown", "requiresDeviceQualification"),
-      "background": support("unsupported", "foregroundOnlyContract"),
-    ])
+  private func reply(_ kind: String, _ payload: Any? = nil) -> JsonObject {
+    var reply: JsonObject = ["kind": kind]
+    if let payload {
+      reply["payload"] = payload
+    }
+    return reply
   }
 
-  private func support(_ level: String, _ reason: String) -> [String: Any] {
-    ["level": level, "reason": reason]
+  // Reads the authorization without a manager. Creating a CBCentralManager shows the Bluetooth prompt.
+  private func adapterState() -> String {
+    switch CBManager.authorization {
+    case .denied, .restricted:
+      return "unauthorized"
+    default:
+      return "unknown"
+    }
+  }
+
+  private func capabilities() -> JsonObject {
+    let notImplemented: JsonObject = ["level": "unknown", "reason": "backendNotImplemented"]
+    return [
+      "central": notImplemented,
+      "peripheral": notImplemented,
+      "advertising": notImplemented,
+      "targetedNotify": notImplemented,
+      "simultaneousRoles": notImplemented,
+      "background": ["level": "unsupported", "reason": "foregroundOnlyContract"] as JsonObject,
+    ]
   }
 }
 
@@ -45,4 +67,3 @@ final class GattifyPlugin: Plugin {
 public func initPlugin() -> Plugin {
   GattifyPlugin()
 }
-
