@@ -64,10 +64,14 @@ jobs:
           targets: aarch64-linux-android
       - run: npm ci
       - run: npm run build
+      - name: Generate the lab app's Android project
+        run: npm run tauri --workspace examples/gattify-lab -- android init --ci --skip-targets-install
+      - name: Run the plugin's Kotlin unit tests
+        working-directory: examples/gattify-lab/src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-gattify:testDebugUnitTest
       - name: Build the lab app for Android
         run: |
           if [ -n "${ANDROID_NDK_HOME:-}" ]; then export NDK_HOME="$ANDROID_NDK_HOME"; fi
-          npm run tauri --workspace examples/gattify-lab -- android init --ci --skip-targets-install
           npm run tauri --workspace examples/gattify-lab -- android build --ci --debug --apk --target aarch64
 
   ios:
@@ -81,3 +85,14 @@ jobs:
           targets: aarch64-apple-ios
       - name: Compile the plugin and its Swift package for iOS
         run: cargo build --locked -p tauri-plugin-gattify --target aarch64-apple-ios
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz frame decoding for 60 seconds
+        run: cargo +nightly fuzz run --fuzz-dir fuzz frame_decode -- -max_total_time=60
