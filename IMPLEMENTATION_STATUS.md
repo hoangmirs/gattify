@@ -27,16 +27,30 @@ Updated: 10 September 2026
 - The npm package contains a complete standalone MIT license file.
 - Documentation, support matrix, contribution/security policies, CI definition,
   and release checklist.
+- gattify rename: one crate, `tauri-plugin-gattify`, and one npm package,
+  `tauri-plugin-gattify-api`. ADR-002 records the layout.
+- Plugin build script, generated command permissions, and the Tauri native
+  layout for the Android library and the Swift package.
+- Native bridge on Android and iOS: every command reaches the native
+  `execute` command. Status commands answer from native code. Radio commands
+  return Unsupported. The native code stores an event channel for later use.
+- Lab app skeleton in examples/gattify-lab that shows adapter state and
+  capabilities.
 
 ## Tests actually run
 
-- npm test: passed, 10 tests across the facade and offline-chat example,
+- npm test: passed, 11 tests across the facade and offline-chat example,
   Node 22.20.0.
-- TypeScript strict build and declaration generation: passed.
-- cargo fmt --all --check: passed, Rust 1.89.0 on aarch64-apple-darwin.
-- cargo test --locked --workspace --all-features: passed, 23 tests.
-- cargo clippy --workspace --all-targets --all-features -- -D warnings: passed.
-- Cargo.lock now resolves from a real toolchain run rather than by hand.
+- npm run typecheck: passed, TypeScript strict build and declaration
+  generation.
+- npm pack: passed, tauri-plugin-gattify-api lists all dist files, npm
+  11.12.1.
+- cargo fmt --all --check: passed, no diff.
+- cargo test --workspace --all-features: passed, 28 tests.
+- cargo test --workspace --no-default-features: passed, 28 tests.
+- cargo clippy --workspace --all-targets --all-features -- -D warnings:
+  passed, cargo 1.89.0 on aarch64-apple-darwin.
+- CI compiled the Android lab app and the iOS plugin build: https://github.com/hoangmirs/gattify/actions/runs/34484003162
 
 ## Not verified in this environment
 
@@ -45,6 +59,10 @@ Updated: 10 September 2026
   attempted, but the installed compiler and Command Line Tools SDK versions do
   not match.
 - Any Bluetooth radio or physical-device scenario.
+- Kotlin and Swift compile in CI only.
+- The CI log does not list Gradle tasks. The Kotlin compile is inferred from
+  the APK build, because Tauri adds each plugin's Android library to the
+  app's Gradle build.
 
 ## Incomplete milestones
 

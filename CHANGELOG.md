@@ -8,6 +8,9 @@
 - Added private TypeScript facade with raw and peer exports.
 - Added Android and iOS native state/capability probes.
 - Added documentation, policy, examples and honest platform gates.
+- Added the plugin build script and the Tauri native project layout.
+- Added a native execute bridge on Android and iOS for status commands.
+- Added the gattify lab app and CI jobs that compile the Kotlin and Swift code.
 
 No native platform is claimed as production-ready in this release state.
 
