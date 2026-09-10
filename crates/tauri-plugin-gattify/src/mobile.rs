@@ -66,7 +66,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{AdapterState, Reply, SupportLevel};
+    use crate::{AdapterState, PermissionOutcome, PermissionState, Reply, SupportLevel};
 
     #[test]
     fn execute_args_match_the_native_wire_shape() {
@@ -117,6 +117,20 @@ mod tests {
         };
         assert_eq!(capabilities.central.level, SupportLevel::Unknown);
         assert_eq!(capabilities.max_connections, None);
+
+        let permissions: Reply = serde_json::from_value(json!({
+            "kind": "permissions",
+            "payload": { "scan": "unknown", "connect": "unknown", "advertise": "unknown" }
+        }))
+        .unwrap();
+        assert_eq!(
+            permissions,
+            Reply::Permissions(PermissionState {
+                scan: PermissionOutcome::Unknown,
+                connect: PermissionOutcome::Unknown,
+                advertise: PermissionOutcome::Unknown,
+            })
+        );
     }
 
     #[test]

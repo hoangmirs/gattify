@@ -35,9 +35,11 @@ final class ExecuteResultTests: XCTestCase {
     for key in ["central", "peripheral", "advertising", "targetedNotify", "simultaneousRoles"] {
       let entry = try XCTUnwrap(payload[key] as? [String: Any], key)
       XCTAssertEqual(entry["level"] as? String, "unknown", key)
+      XCTAssertEqual(entry["reason"] as? String, "backendNotImplemented", key)
     }
     let background = try XCTUnwrap(payload["background"] as? [String: Any])
     XCTAssertEqual(background["level"] as? String, "unsupported")
+    XCTAssertEqual(background["reason"] as? String, "foregroundOnlyContract")
   }
 
   func testCheckPermissionsResolvesUnknown() throws {
@@ -63,6 +65,8 @@ final class ExecuteResultTests: XCTestCase {
     for kind in ["startScan", "connect", "createServer", "startAdvertising", "notify"] {
       let result = executeResult(kind: kind, adapterState: { "unknown" })
       XCTAssertEqual(rejected(result)?.code, "unsupported", kind)
+      XCTAssertEqual(
+        rejected(result)?.message, "the iOS backend does not implement \(kind) yet", kind)
     }
   }
 

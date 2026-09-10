@@ -32,9 +32,13 @@ class ExecuteResultTest {
     assertEquals("capabilities", reply.getString("kind"))
     val payload = reply.getJSONObject("payload")
     for (key in listOf("central", "peripheral", "advertising", "targetedNotify", "simultaneousRoles")) {
-      assertEquals(key, "unknown", payload.getJSONObject(key).getString("level"))
+      val entry = payload.getJSONObject(key)
+      assertEquals(key, "unknown", entry.getString("level"))
+      assertEquals(key, "backendNotImplemented", entry.getString("reason"))
     }
-    assertEquals("unsupported", payload.getJSONObject("background").getString("level"))
+    val background = payload.getJSONObject("background")
+    assertEquals("unsupported", background.getString("level"))
+    assertEquals("foregroundOnlyContract", background.getString("reason"))
   }
 
   @Test
