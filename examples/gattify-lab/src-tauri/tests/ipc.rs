@@ -1,9 +1,9 @@
 use serde_json::json;
 use tauri::{
-    ipc::{CallbackFn, InvokeBody},
+    ipc::{CallbackFn, CapabilityBuilder, InvokeBody},
     test::{get_ipc_response, mock_builder, MockRuntime, INVOKE_KEY},
     webview::InvokeRequest,
-    App, WebviewWindowBuilder,
+    App, Manager, WebviewWindowBuilder,
 };
 
 fn request(cmd: &str) -> InvokeRequest {
@@ -15,6 +15,13 @@ fn request(cmd: &str) -> InvokeRequest {
         body: InvokeBody::default(),
         headers: Default::default(),
         invoke_key: INVOKE_KEY.to_string(),
+    }
+}
+
+fn request_with_body(cmd: &str, body: serde_json::Value) -> InvokeRequest {
+    InvokeRequest {
+        body: InvokeBody::Json(body),
+        ..request(cmd)
     }
 }
 
@@ -83,4 +90,59 @@ fn execute_scan_is_rejected_by_the_acl() {
         message.contains("not allowed"),
         "expected an ACL rejection mentioning \"not allowed\", got: {message}"
     );
+    assert!(
+        message.contains("gattify:allow-execute-scan"),
+        "expected the ACL rejection to list execute_scan's own permission, got: {message}"
+    );
+}
+
+#[test]
+fn execute_scan_checks_its_own_role_once_granted() {
+    let app = build_app();
+    app.add_capability(
+        CapabilityBuilder::new("gattify-scan-runtime-grant")
+            .window("main")
+            .permission("gattify:scan"),
+    )
+    .expect("failed to grant gattify:scan to the main window at run time");
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .expect("failed to build the main webview");
+
+    let connect_body = json!({
+        "request": {
+            "operationId": "op-1",
+            "command": {
+                "kind": "connect",
+                "payload": { "deviceId": "device-1", "options": { "timeoutMs": null } }
+            },
+            "deadlineMillis": null
+        }
+    });
+    let role_error = get_ipc_response(
+        &webview,
+        request_with_body("plugin:gattify|execute_scan", connect_body),
+    )
+    .expect_err("execute_scan must refuse a connect command once the ACL grants the role");
+    assert_eq!(
+        role_error["message"],
+        "command is not permitted through this role-specific endpoint"
+    );
+
+    let scan_body = json!({
+        "request": {
+            "operationId": "op-2",
+            "command": {
+                "kind": "startScan",
+                "payload": { "serviceUuids": [], "timeoutMs": null }
+            },
+            "deadlineMillis": null
+        }
+    });
+    let backend_error = get_ipc_response(
+        &webview,
+        request_with_body("plugin:gattify|execute_scan", scan_body),
+    )
+    .expect_err("a startScan command passes the role check and reaches the desktop backend");
+    assert_eq!(backend_error["code"], "unsupported");
 }
