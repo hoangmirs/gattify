@@ -116,55 +116,56 @@ impl Sender {
 
     /// Advances stop-and-wait delivery using the supplied monotonic time.
     ///
-    /// # Errors
-    ///
-    /// Returns a framing error if the queued payload cannot be represented with
-    /// the configured characteristic and logical-size limits.
-    pub fn poll(&mut self, now_ms: u64) -> BleResult<SendAction> {
+    /// A payload that cannot be framed under the configured limits is reported
+    /// as [`SendAction::Failed`] for its own message ID, never dropped silently.
+    pub fn poll(&mut self, now_ms: u64) -> SendAction {
         if let Some(pending) = &mut self.pending {
             if now_ms.saturating_sub(pending.first_submitted_ms) >= self.limits.absolute_deadline_ms
             {
                 let message_id = pending.message.message_id;
                 self.pending = None;
-                return Ok(SendAction::Failed {
+                return SendAction::Failed {
                     message_id,
                     error: timeout_error(
                         "absolute send deadline elapsed; delivery may have occurred",
                     ),
-                });
+                };
             }
             if now_ms.saturating_sub(pending.last_submitted_ms) >= self.limits.ack_deadline_ms {
                 if pending.retransmissions >= self.limits.retransmissions {
                     let message_id = pending.message.message_id;
                     self.pending = None;
-                    return Ok(SendAction::Failed {
+                    return SendAction::Failed {
                         message_id,
                         error: timeout_error("transport ACK deadline exhausted"),
-                    });
+                    };
                 }
                 pending.retransmissions += 1;
                 pending.last_submitted_ms = now_ms;
-                return Ok(SendAction::Submit {
+                return SendAction::Submit {
                     message_id: pending.message.message_id,
                     frames: pending.frames.clone(),
                     retransmission: true,
-                });
+                };
             }
-            return Ok(SendAction::Idle);
+            return SendAction::Idle;
         }
 
         let Some(message) = self.queue.pop_front() else {
-            return Ok(SendAction::Idle);
+            return SendAction::Idle;
         };
         self.queue_bytes -= message.payload.len();
-        let frames = fragment(
+        let message_id = message.message_id;
+        let frames = match fragment(
             FrameKind::Data,
-            message.message_id,
+            message_id,
             &message.payload,
             self.limits.value_limit,
             self.limits.max_logical_size,
-        )?;
-        let message_id = message.message_id;
+        ) {
+            Ok(frames) => frames,
+            Err(error) => return SendAction::Failed { message_id, error },
+        };
         self.pending = Some(Pending {
             message,
             frames: frames.clone(),
@@ -172,11 +173,11 @@ impl Sender {
             last_submitted_ms: now_ms,
             retransmissions: 0,
         });
-        Ok(SendAction::Submit {
+        SendAction::Submit {
             message_id,
             frames,
             retransmission: false,
-        })
+        }
     }
 
     /// Applies an acknowledgement to the current in-flight message.
@@ -245,21 +246,21 @@ mod tests {
         let mut sender = Sender::default();
         let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
         assert!(matches!(
-            sender.poll(0).unwrap(),
+            sender.poll(0),
             SendAction::Submit {
                 retransmission: false,
                 ..
             }
         ));
         assert!(matches!(
-            sender.poll(5_000).unwrap(),
+            sender.poll(5_000),
             SendAction::Submit {
                 retransmission: true,
                 ..
             }
         ));
         assert!(matches!(
-            sender.poll(10_000).unwrap(),
+            sender.poll(10_000),
             SendAction::Submit {
                 retransmission: true,
                 ..
@@ -268,7 +269,7 @@ mod tests {
         let SendAction::Failed {
             message_id: failed,
             error,
-        } = sender.poll(15_000).unwrap()
+        } = sender.poll(15_000)
         else {
             panic!("expected timeout")
         };
@@ -281,14 +282,33 @@ mod tests {
         let mut sender = Sender::default();
         let first = sender.enqueue(vec![1]).unwrap();
         let second = sender.enqueue(vec![2]).unwrap();
-        sender.poll(0).unwrap();
+        sender.poll(0);
         assert_eq!(
             sender.acknowledge(first).unwrap(),
             SendAction::Acknowledged { message_id: first }
         );
         assert!(matches!(
-            sender.poll(1).unwrap(),
+            sender.poll(1),
             SendAction::Submit { message_id, .. } if message_id == second
         ));
+    }
+
+    #[test]
+    fn unframeable_payload_fails_its_own_message_instead_of_vanishing() {
+        let mut sender = Sender::new(SendLimits {
+            value_limit: 8,
+            ..SendLimits::default()
+        });
+        let message_id = sender.enqueue(b"data".to_vec()).unwrap();
+        let SendAction::Failed {
+            message_id: failed,
+            error,
+        } = sender.poll(0)
+        else {
+            panic!("expected a framing failure")
+        };
+        assert_eq!(failed, message_id);
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        assert_eq!(sender.queued_bytes(), 0);
     }
 }

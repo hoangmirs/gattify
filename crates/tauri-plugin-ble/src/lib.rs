@@ -148,7 +148,7 @@ mod tauri_api {
         }
         state
             .execute_with_id(
-                OwnerId::new(format!("webview:{}", webview.label())),
+                owner(&webview),
                 request.operation_id,
                 request.command,
                 request.deadline_millis,
@@ -198,11 +198,7 @@ mod tauri_api {
         request: PermissionRequest,
     ) -> BleResult<Reply> {
         state
-            .execute(
-                OwnerId::new(format!("webview:{}", webview.label())),
-                Command::RequestPermissions(request),
-                None,
-            )
+            .execute(owner(&webview), Command::RequestPermissions(request), None)
             .await
     }
 
@@ -263,12 +259,7 @@ mod tauri_api {
         state: State<'_, BleRuntime<SystemBackend>>,
         request: CancelRequest,
     ) -> BleResult<Reply> {
-        state
-            .cancel(
-                &OwnerId::new(format!("webview:{}", webview.label())),
-                &request.operation_id,
-            )
-            .await
+        state.cancel(&owner(&webview), &request.operation_id).await
     }
 
     #[tauri::command]
@@ -277,11 +268,7 @@ mod tauri_api {
         state: State<'_, BleRuntime<SystemBackend>>,
     ) -> BleResult<Reply> {
         state
-            .execute(
-                OwnerId::new(format!("webview:{}", webview.label())),
-                Command::GetState,
-                None,
-            )
+            .execute(owner(&webview), Command::GetState, None)
             .await
     }
 
@@ -291,11 +278,7 @@ mod tauri_api {
         state: State<'_, BleRuntime<SystemBackend>>,
     ) -> BleResult<Reply> {
         state
-            .execute(
-                OwnerId::new(format!("webview:{}", webview.label())),
-                Command::GetCapabilities,
-                None,
-            )
+            .execute(owner(&webview), Command::GetCapabilities, None)
             .await
     }
 
@@ -305,11 +288,7 @@ mod tauri_api {
         state: State<'_, BleRuntime<SystemBackend>>,
     ) -> BleResult<Reply> {
         state
-            .execute(
-                OwnerId::new(format!("webview:{}", webview.label())),
-                Command::CheckPermissions,
-                None,
-            )
+            .execute(owner(&webview), Command::CheckPermissions, None)
             .await
     }
 
@@ -319,20 +298,16 @@ mod tauri_api {
         state: State<'_, BleRuntime<SystemBackend>>,
     ) -> BleResult<Reply> {
         state
-            .execute(
-                OwnerId::new(format!("webview:{}", webview.label())),
-                Command::CloseOwner,
-                None,
-            )
+            .execute(owner(&webview), Command::CloseOwner, None)
             .await
     }
 
     fn peer_unavailable() -> BleError {
-        #[cfg(feature = "peer")]
-        let message = "peer transport is compiled but no verified native backend is available";
-        #[cfg(not(feature = "peer"))]
-        let message = "peer transport is disabled in this Rust build";
-        BleError::unsupported(message)
+        BleError::unsupported("no peer-capable native backend is available in this build")
+    }
+
+    fn owner<R: Runtime>(webview: &Webview<R>) -> OwnerId {
+        OwnerId::new(format!("webview:{}", webview.label()))
     }
 
     #[tauri::command]

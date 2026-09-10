@@ -11,7 +11,7 @@ pub use frame::{fragment, Frame, FrameKind, HEADER_LEN, PROTOCOL_MAJOR};
 pub use receiver::{ReceiveAction, Receiver, ReceiverLimits};
 pub use sender::{QueuedMessage, SendAction, SendLimits, Sender};
 
-/// Independently generated UUIDs for the v1 profile characteristics.
+/// UUIDs for the v1 profile characteristics.
 pub const INFO_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30101";
 pub const RX_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30102";
 pub const TX_CHARACTERISTIC_UUID: &str = "b1e10f10-6a2c-4a62-8e9e-2c938fa30103";

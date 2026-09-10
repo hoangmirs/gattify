@@ -8,15 +8,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["tauri", "peer"]
+default = ["tauri"]
 tauri = ["dep:tauri"]
-peer = ["dep:ble-peer"]
 mock = []
 
 [dependencies]
 async-trait.workspace = true
 ble-core.workspace = true
-ble-peer = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { workspace = true, optional = true }

@@ -1,5 +1,5 @@
-import type { BleBridge, Unlisten } from "./bridge.js";
-import { defaultBridge } from "./bridge.js";
+import type { BleBridge } from "./bridge.js";
+import { defaultBridge, subscribe } from "./bridge.js";
 import { decodeBytes, encodeBytes } from "./wire.js";
 import type { DeliveryOutcome, DeviceId, PeerId } from "./types.js";
 import { BleError } from "./types.js";
@@ -54,22 +54,22 @@ export async function createEndpoint(options: PeerOptions): Promise<Endpoint> {
 
 class EndpointHandle implements Endpoint {
   readonly #callbacks = new Set<(peer: Peer) => void>();
-  #unlisten: Unlisten | undefined;
+  readonly #unlisten: () => void;
   #closed = false;
 
   constructor(
     private readonly bridge: BleBridge,
     readonly endpointId: string,
   ) {
-    void bridge
-      .listen?.<{ endpointId: string; peerId: PeerId }>("ble://peer-ready", (event) => {
-        if (event.payload.endpointId !== this.endpointId || this.#closed) return;
-        const peer = new PeerHandle(this.bridge, event.payload.peerId);
+    this.#unlisten = subscribe<{ endpointId: string; peerId: PeerId }>(
+      bridge,
+      "ble://peer-ready",
+      (ready) => {
+        if (ready.endpointId !== this.endpointId) return;
+        const peer = new PeerHandle(this.bridge, ready.peerId);
         for (const callback of this.#callbacks) callback(peer);
-      })
-      .then((unlisten) => {
-        this.#unlisten = unlisten;
-      });
+      },
+    );
   }
 
   async dial(deviceId: DeviceId): Promise<Peer> {
@@ -88,29 +88,29 @@ class EndpointHandle implements Endpoint {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#unlisten?.();
+    this.#unlisten();
     await this.bridge.invoke("plugin:ble|close_endpoint", { endpointId: this.endpointId });
   }
 }
 
 class PeerHandle implements Peer {
   readonly #callbacks = new Set<(bytes: Uint8Array) => void>();
-  #unlisten: Unlisten | undefined;
+  readonly #unlisten: () => void;
   #closed = false;
 
   constructor(
     private readonly bridge: BleBridge,
     readonly id: PeerId,
   ) {
-    void bridge
-      .listen?.<{ peerId: PeerId; valueBase64: string }>("ble://peer-message", (event) => {
-        if (event.payload.peerId !== this.id || this.#closed) return;
-        const bytes = decodeBytes(event.payload.valueBase64);
+    this.#unlisten = subscribe<{ peerId: PeerId; valueBase64: string }>(
+      bridge,
+      "ble://peer-message",
+      (message) => {
+        if (message.peerId !== this.id) return;
+        const bytes = decodeBytes(message.valueBase64);
         for (const callback of this.#callbacks) callback(bytes);
-      })
-      .then((unlisten) => {
-        this.#unlisten = unlisten;
-      });
+      },
+    );
   }
 
   send(
@@ -135,7 +135,7 @@ class PeerHandle implements Peer {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#unlisten?.();
+    this.#unlisten();
     await this.bridge.invoke("plugin:ble|close_peer", { peerId: this.id });
   }
 }

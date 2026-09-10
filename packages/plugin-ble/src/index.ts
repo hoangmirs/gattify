@@ -1,4 +1,4 @@
-import { defaultBridge, type BleBridge, type Unlisten } from "./bridge.js";
+import { defaultBridge, subscribe, type BleBridge } from "./bridge.js";
 import {
   decodeBytes,
   dispatch,
@@ -186,22 +186,18 @@ class Session implements BleSession {
 class Scan implements ScanHandle {
   readonly #devices = new Map<DeviceId, DiscoveredDevice>();
   readonly #callbacks = new Set<(device: DiscoveredDevice) => void>();
-  #unlisten: Unlisten | undefined;
+  readonly #unlisten: () => void;
   #closed = false;
 
   constructor(
     private readonly bridge: BleBridge,
     readonly id: ScanId,
   ) {
-    void bridge
-      .listen?.<DiscoveredDevice>("ble://scan-result", (event) => {
-        if (event.payload.scanId !== this.id || this.#closed) return;
-        this.#devices.set(event.payload.id, event.payload);
-        for (const callback of this.#callbacks) callback(event.payload);
-      })
-      .then((unlisten) => {
-        this.#unlisten = unlisten;
-      });
+    this.#unlisten = subscribe<DiscoveredDevice>(bridge, "ble://scan-result", (device) => {
+      if (device.scanId !== this.id) return;
+      this.#devices.set(device.id, device);
+      for (const callback of this.#callbacks) callback(device);
+    });
   }
 
   snapshot(): readonly DiscoveredDevice[] {
@@ -216,7 +212,7 @@ class Scan implements ScanHandle {
   async stop(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#unlisten?.();
+    this.#unlisten();
     await dispatch(this.bridge, { kind: "stopScan", payload: { scanId: this.id } });
   }
 }
@@ -295,25 +291,22 @@ class Connection implements ConnectionHandle {
 
 class Subscription implements SubscriptionHandle {
   readonly #callbacks = new Set<(value: Uint8Array) => void>();
-  #unlisten: Unlisten | undefined;
+  readonly #unlisten: () => void;
   #closed = false;
 
   constructor(
     private readonly bridge: BleBridge,
     readonly id: SubscriptionId,
   ) {
-    void bridge
-      .listen?.<{ subscriptionId: SubscriptionId; valueBase64: string }>(
-        "ble://characteristic-value",
-        (event) => {
-          if (event.payload.subscriptionId !== this.id || this.#closed) return;
-          const value = decodeBytes(event.payload.valueBase64);
-          for (const callback of this.#callbacks) callback(value);
-        },
-      )
-      .then((unlisten) => {
-        this.#unlisten = unlisten;
-      });
+    this.#unlisten = subscribe<{ subscriptionId: SubscriptionId; valueBase64: string }>(
+      bridge,
+      "ble://characteristic-value",
+      (received) => {
+        if (received.subscriptionId !== this.id) return;
+        const value = decodeBytes(received.valueBase64);
+        for (const callback of this.#callbacks) callback(value);
+      },
+    );
   }
 
   onValue(callback: (value: Uint8Array) => void): () => void {
@@ -324,7 +317,7 @@ class Subscription implements SubscriptionHandle {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#unlisten?.();
+    this.#unlisten();
     await dispatch(this.bridge, {
       kind: "unsubscribe",
       payload: { subscriptionId: this.id },
@@ -352,7 +345,7 @@ class Server implements ServerHandle {
   }
 
   async stopAdvertising(): Promise<void> {
-    if (this.#closed) return;
+    this.#assertOpen();
     await dispatch(this.bridge, {
       kind: "stopAdvertising",
       payload: { serverId: this.id },

@@ -24,11 +24,6 @@ impl Backend for SystemBackend {
                 advertise: PermissionOutcome::Unknown,
             })),
             Command::CloseOwner | Command::Cancel { .. } => Ok(Reply::Empty),
-            #[cfg(not(feature = "peer"))]
-            _ => Err(BleError::unsupported(
-                "native backend is not implemented; peer feature is disabled",
-            )),
-            #[cfg(feature = "peer")]
             _ => Err(BleError::unsupported(
                 "native backend is not implemented for this target build",
             )),

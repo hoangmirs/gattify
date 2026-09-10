@@ -13,16 +13,22 @@ export type InvitationDecision =
 export class InvitationInbox {
   readonly #seen = new Map<string, InvitationDecision>();
 
+  constructor(readonly maxDecisions = 256) {
+    if (!Number.isSafeInteger(maxDecisions) || maxDecisions <= 0) {
+      throw new Error("decision capacity must be positive");
+    }
+  }
+
   receive(invitation: Invitation, nowMs: number): InvitationDecision | null {
+    validateInvitation(invitation);
     const previous = this.#seen.get(invitation.invitationId);
     if (previous) return previous;
-    validateInvitation(invitation);
     if (invitation.expiresAtMs <= nowMs) {
       const decision: InvitationDecision = {
         kind: "expired",
         invitationId: invitation.invitationId,
       };
-      this.#seen.set(invitation.invitationId, decision);
+      this.#remember(invitation.invitationId, decision);
       return decision;
     }
     return null;
@@ -34,8 +40,17 @@ export class InvitationInbox {
     const decision: InvitationDecision = accepted
       ? { kind: "accepted", invitationId }
       : { kind: "declined", invitationId };
-    this.#seen.set(invitationId, decision);
+    this.#remember(invitationId, decision);
     return decision;
+  }
+
+  #remember(invitationId: string, decision: InvitationDecision): void {
+    this.#seen.set(invitationId, decision);
+    while (this.#seen.size > this.maxDecisions) {
+      const oldest = this.#seen.keys().next();
+      if (oldest.done === true) break;
+      this.#seen.delete(oldest.value);
+    }
   }
 }
 

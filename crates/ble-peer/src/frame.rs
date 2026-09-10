@@ -246,11 +246,6 @@ pub fn fragment(
         })?;
         let start = index * fragment_payload;
         let end = usize::min(start + fragment_payload, payload.len());
-        let frame_payload = if payload.is_empty() {
-            Vec::new()
-        } else {
-            payload[start..end].to_vec()
-        };
         frames.push(
             Frame {
                 kind,
@@ -258,7 +253,7 @@ pub fn fragment(
                 fragment_index,
                 fragment_count,
                 total_length,
-                payload: frame_payload,
+                payload: payload[start..end].to_vec(),
             }
             .encode(max_logical_size)?,
         );

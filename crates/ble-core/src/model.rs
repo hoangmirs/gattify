@@ -1,5 +1,6 @@
 use std::{fmt, str::FromStr, time::Duration};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 
 use crate::{BleError, BleResult, ErrorCode};
@@ -446,6 +447,20 @@ pub fn validate_server_definition(definition: &ServerDefinition) -> BleResult<()
                     "duplicate characteristic instance key within service",
                 ));
             }
+            if let Some(initial) = &characteristic.initial_value_base64 {
+                let decoded = BASE64.decode(initial).map_err(|_| {
+                    BleError::new(
+                        ErrorCode::InvalidArgument,
+                        "characteristic initial value is not valid base64",
+                    )
+                })?;
+                if decoded.len() > characteristic.max_value_length as usize {
+                    return Err(BleError::new(
+                        ErrorCode::InvalidArgument,
+                        "characteristic initial value exceeds its maximum length",
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -467,5 +482,44 @@ impl FromStr for AdapterState {
                 "unknown adapter state",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn definition(initial: Option<&str>, max_value_length: u32) -> ServerDefinition {
+        ServerDefinition {
+            services: vec![LocalService {
+                instance_key: "s".into(),
+                uuid: "b1e10f10-6a2c-4a62-8e9e-2c938fa30100".into(),
+                primary: true,
+                characteristics: vec![LocalCharacteristic {
+                    instance_key: "c".into(),
+                    uuid: "b1e10f10-6a2c-4a62-8e9e-2c938fa30101".into(),
+                    properties: CharacteristicProperties::default(),
+                    initial_value_base64: initial.map(Into::into),
+                    max_value_length,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn initial_values_are_validated_before_reaching_a_platform_sdk() {
+        assert!(validate_server_definition(&definition(Some("AAEC"), 20)).is_ok());
+        assert_eq!(
+            validate_server_definition(&definition(Some("not base64!"), 20))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            validate_server_definition(&definition(Some("AAEC"), 2))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
     }
 }

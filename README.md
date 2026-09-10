@@ -1,7 +1,7 @@
 # Tauri BLE
 
-An independently implemented, MIT-licensed Tauri v2 BLE workspace for raw GATT
-operations and optional complete-message transport.
+A Tauri v2 BLE workspace for raw GATT operations and optional
+complete-message transport.
 
 This repository is an implementation-in-progress. The platform-neutral
 contracts, deterministic mock backend, TypeScript facade, and peer wire
@@ -51,9 +51,8 @@ The frontend owns a session and closes it explicitly:
     await scan.stop();
     await ble.close();
 
-Importing the package does not initialize Bluetooth. Raw-only consumers may
-disable the Rust peer feature. Peer imports return Unsupported unless that
-feature and a peer-capable native backend are both available.
+Importing the package does not initialize Bluetooth. Peer imports return
+Unsupported until a peer-capable native backend exists.
 
 Tauri capabilities opt into roles separately with `ble:scan`, `ble:connect`,
 `ble:server`, `ble:advertise`, and `ble:peer`. The default `ble:default`

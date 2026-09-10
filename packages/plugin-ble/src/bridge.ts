@@ -23,3 +23,30 @@ export async function defaultBridge(): Promise<BleBridge> {
   };
 }
 
+
+/**
+ * Subscribes to a plugin event and returns a synchronous unsubscribe function.
+ *
+ * The returned function works even before `listen` resolves, so a handle that
+ * closes immediately after construction still detaches its native listener.
+ */
+export function subscribe<T>(
+  bridge: BleBridge,
+  event: string,
+  handler: (payload: T) => void,
+): () => void {
+  let unlisten: Unlisten | undefined;
+  let stopped = false;
+  void bridge.listen
+    ?.<T>(event, (received) => {
+      if (!stopped) handler(received.payload);
+    })
+    .then((received) => {
+      if (stopped) received();
+      else unlisten = received;
+    });
+  return () => {
+    stopped = true;
+    unlisten?.();
+  };
+}

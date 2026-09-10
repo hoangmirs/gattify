@@ -95,9 +95,6 @@ impl Receiver {
     ///
     /// Returns a structured protocol, payload-size, or queue-capacity error when
     /// the frame cannot be safely accepted.
-    // Keeping admission and ACK decisions in one transition prevents partial
-    // state updates from escaping between reassembly and queue admission.
-    #[allow(clippy::too_many_lines)]
     pub fn receive(&mut self, bytes: &[u8]) -> BleResult<ReceiveAction> {
         let elapsed = self.started_at.elapsed().as_millis();
         let now_ms = u64::try_from(elapsed).unwrap_or(u64::MAX);
@@ -113,6 +110,8 @@ impl Receiver {
     ///
     /// Returns a structured protocol, payload-size, or queue-capacity error when
     /// the frame cannot be safely accepted.
+    // Keeping admission and ACK decisions in one transition prevents partial
+    // state updates from escaping between reassembly and queue admission.
     #[allow(clippy::too_many_lines)]
     pub fn receive_at(&mut self, bytes: &[u8], now_ms: u64) -> BleResult<ReceiveAction> {
         self.expire_partials(now_ms);
@@ -268,21 +267,16 @@ impl Receiver {
             ));
         }
 
-        let evicted_recent_bytes = if self.limits.recent_message_ids > 0
-            && self.recent.len() >= self.limits.recent_message_ids
-        {
+        let evicted_recent_bytes = if self.recent.len() >= self.limits.recent_message_ids {
             self.recent.front().map_or(0, |(_, value)| value.len())
         } else {
             0
         };
-        let added_recent_bytes = if self.limits.recent_message_ids > 0 {
-            payload.len()
-        } else {
-            0
-        };
+        // An admitted payload is held twice: in the complete queue and in the
+        // duplicate-detection cache.
         let admission_bytes = payload
             .len()
-            .checked_add(added_recent_bytes)
+            .checked_mul(2)
             .and_then(|bytes| self.total_buffered_bytes().checked_add(bytes))
             .map(|bytes| bytes.saturating_sub(evicted_recent_bytes));
         if admission_bytes.is_none_or(|bytes| bytes > self.limits.max_buffered_bytes) {
@@ -295,10 +289,8 @@ impl Receiver {
         self.complete_queue_bytes += payload.len();
         self.completed
             .push_back((frame.message_id, payload.clone()));
-        if self.limits.recent_message_ids > 0 {
-            self.recent_bytes += payload.len();
-            self.recent.push_back((frame.message_id, payload.clone()));
-        }
+        self.recent_bytes += payload.len();
+        self.recent.push_back((frame.message_id, payload.clone()));
         while self.recent.len() > self.limits.recent_message_ids {
             if let Some((_, evicted)) = self.recent.pop_front() {
                 self.recent_bytes -= evicted.len();

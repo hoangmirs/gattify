@@ -1,10 +1,10 @@
 # Implementation status
 
-Updated: 9 September 2026
+Updated: 10 September 2026
 
 ## Delivered
 
-- M0 workspace, toolchain pin, licensing/provenance policy, ADR-001, Android
+- M0 workspace, toolchain pin, provenance policy, ADR-001, Android
   and iOS native state/capability callback sources.
 - M1 serializable Rust DTOs with tested camelCase wire fields, error contract,
   owner-scoped operation manager, caller-visible operation IDs, live
@@ -30,15 +30,16 @@ Updated: 9 September 2026
 
 ## Tests actually run
 
-- npm test: passed, 9 tests across the facade and offline-chat example,
+- npm test: passed, 10 tests across the facade and offline-chat example,
   Node 22.20.0.
 - TypeScript strict build and declaration generation: passed.
-- npm audit: 0 vulnerabilities in the current development dependency tree.
+- cargo fmt --all --check: passed, Rust 1.89.0 on aarch64-apple-darwin.
+- cargo test --locked --workspace --all-features: passed, 23 tests.
+- cargo clippy --workspace --all-targets --all-features -- -D warnings: passed.
+- Cargo.lock now resolves from a real toolchain run rather than by hand.
 
 ## Not verified in this environment
 
-- Rust formatting, compilation, clippy, and Rust unit tests: Rust is not
-  installed on the host; an isolated toolchain download did not complete.
 - Android compilation: Android SDK/Gradle wrapper is not available.
 - iOS compilation: full Xcode is not available. Swift manifest validation was
   attempted, but the installed compiler and Command Line Tools SDK versions do
@@ -62,6 +63,5 @@ Unsupported for radio operations. It never substitutes the mock backend.
 
 ## Next step
 
-Install Rust 1.89 and platform SDKs, run the recorded CI commands, then implement
-Android central/peripheral operations behind the Backend contract before
-claiming mobile support.
+Install the platform SDKs, then implement Android central/peripheral operations
+behind the Backend contract before claiming mobile support.

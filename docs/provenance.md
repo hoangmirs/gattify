@@ -1,7 +1,7 @@
 # Provenance log
 
-The source in this repository was written independently from the supplied
-implementation contract.
+This table records the external material consulted while writing the source in
+this repository. No third-party code is copied here.
 
 | Source | Accessed | Purpose | License / terms | Code copied | Notice |
 | --- | --- | --- | --- | --- | --- |
@@ -11,9 +11,8 @@ implementation contract.
 | https://developer.android.com/develop/connectivity/bluetooth/bt-permissions | 2026-09-08 | Android permission model | Android documentation terms | No | Link only |
 | https://developer.apple.com/documentation/corebluetooth | 2026-09-08 | CoreBluetooth state and manager APIs | Apple developer documentation terms | No | Link only |
 | https://learn.microsoft.com/en-us/windows/apps/develop/devices-sensors/gatt-server | 2026-09-08 | Windows GATT server feasibility | Microsoft documentation terms | No | Link only |
-| https://bluez.readthedocs.io/en/latest/gatt-api/ | 2026-09-08 | BlueZ exported GATT model | Documentation terms; BlueZ GPL-2.0-or-later (not used as dependency/source) | No | Link only |
+| https://bluez.readthedocs.io/en/latest/gatt-api/ | 2026-09-08 | BlueZ exported GATT model | Documentation terms | No | Link only |
 
 Dependency versions are recorded in Cargo.lock and package-lock.json after
 resolution. THIRD_PARTY_NOTICES.md records direct dependency licenses. Release
 requires a transitive SPDX or CycloneDX inventory and license review.
-

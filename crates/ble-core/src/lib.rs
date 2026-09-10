@@ -11,5 +11,5 @@ mod model;
 pub use backend::{Backend, Command, Event, OperationContext, Reply};
 pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
 pub use manager::Manager;
-pub use mock::{FakeClock, MockBackend};
+pub use mock::MockBackend;
 pub use model::*;

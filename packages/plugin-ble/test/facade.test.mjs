@@ -101,3 +101,30 @@ test("aborting a live operation invokes native cancellation", async () => {
   const cancel = calls.find(([command]) => command === "plugin:ble|cancel");
   assert.equal(cancel[1].request.operationId, execute[1].request.operationId);
 });
+
+test("closing a scan before listen resolves still detaches the native listener", async () => {
+  let unlistened = false;
+  let resolveListen;
+  const bridge = {
+    async invoke(command, args) {
+      const kind = args?.request?.command?.kind;
+      if (kind === "startScan") return { kind: "scanStarted", payload: { scanId: "scan-1" } };
+      if (kind === "stopScan") return { kind: "empty" };
+      throw new Error("unexpected command " + command);
+    },
+    listen() {
+      return new Promise((resolve) => {
+        resolveListen = resolve;
+      });
+    },
+  };
+  const session = await createBle({ bridge });
+  const scan = await session.scan({ serviceUuids: [] });
+  await scan.stop();
+
+  resolveListen(() => {
+    unlistened = true;
+  });
+  await Promise.resolve();
+  assert.equal(unlistened, true);
+});

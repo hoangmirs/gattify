@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -13,20 +10,6 @@ use crate::{
     PermissionOutcome, PermissionState, Reply, ResourceId, ResourceSnapshot, ScanId, ServerId,
     SubscriptionId, Support,
 };
-
-#[derive(Default)]
-pub struct FakeClock(AtomicU64);
-
-impl FakeClock {
-    #[must_use]
-    pub fn now_millis(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-
-    pub fn advance(&self, millis: u64) {
-        self.0.fetch_add(millis, Ordering::Relaxed);
-    }
-}
 
 #[derive(Default)]
 struct MockState {
@@ -67,14 +50,6 @@ impl MockState {
 #[derive(Default)]
 pub struct MockBackend {
     state: Mutex<MockState>,
-    clock: FakeClock,
-}
-
-impl MockBackend {
-    #[must_use]
-    pub fn clock(&self) -> &FakeClock {
-        &self.clock
-    }
 }
 
 #[async_trait]
@@ -202,17 +177,13 @@ impl Backend for MockBackend {
                 Ok(Reply::SubscriptionStarted { subscription_id })
             }
             Command::Unsubscribe { subscription_id } => {
-                let owners: HashMap<_, _> = state
+                let owned = state
                     .subscriptions
-                    .iter()
-                    .map(|(id, (owner, _))| (id.clone(), owner.clone()))
-                    .collect();
-                MockState::require_owner(
-                    &owners,
-                    &subscription_id,
-                    &context.owner_id,
-                    subscription_id.clone().into(),
-                )?;
+                    .get(&subscription_id)
+                    .is_some_and(|(owner, _)| owner == &context.owner_id);
+                if !owned {
+                    return Err(BleError::invalid_handle(subscription_id));
+                }
                 state.subscriptions.remove(&subscription_id);
                 Ok(Reply::Empty)
             }
