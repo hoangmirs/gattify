@@ -11,6 +11,7 @@
 - Added the plugin build script and the Tauri native project layout.
 - Added a native execute bridge on Android and iOS for status commands.
 - Added the gattify lab app and CI jobs that compile the Kotlin and Swift code.
+- Added tests for the Tauri command layer and the Android and iOS dispatch, and a CI fuzz run.
 
 No native platform is claimed as production-ready in this release state.
 

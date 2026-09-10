@@ -46,11 +46,17 @@ Updated: 10 September 2026
 - npm pack: passed, tauri-plugin-gattify-api lists all dist files, npm
   11.12.1.
 - cargo fmt --all --check: passed, no diff.
-- cargo test --workspace --all-features: passed, 28 tests.
+- cargo test --workspace --all-features: passed, 29 tests.
 - cargo test --workspace --no-default-features: passed, 28 tests.
 - cargo clippy --workspace --all-targets --all-features -- -D warnings:
   passed, cargo 1.89.0 on aarch64-apple-darwin.
-- CI compiled the Android lab app and the iOS plugin build: https://github.com/hoangmirs/gattify/actions/runs/34484003162
+- cargo test --manifest-path examples/gattify-lab/src-tauri/Cargo.toml:
+  passed, 5 IPC tests against Tauri's mock runtime.
+- CI, from run https://github.com/hoangmirs/gattify/actions/runs/34529689503:
+  compiled the Android lab app and the iOS plugin build.
+- CI ran 6 Kotlin JUnit tests for the Android plugin.
+- CI ran 6 XCTest tests for the iOS plugin on a simulator.
+- CI fuzzed `frame_decode` for 60 seconds: 33,324,611 runs, no crash.
 - The ios CI job compiles the crate with `unsafe_code = "forbid"`, so the
   iOS plugin binding needs no lint exception.
 
@@ -61,10 +67,7 @@ Updated: 10 September 2026
   attempted, but the installed compiler and Command Line Tools SDK versions do
   not match.
 - Any Bluetooth radio or physical-device scenario.
-- Kotlin and Swift compile in CI only.
-- The CI log does not list Gradle tasks. The Kotlin compile is inferred from
-  the APK build, because Tauri adds each plugin's Android library to the
-  app's Gradle build.
+- Kotlin and Swift compile and run their unit tests in CI only.
 
 ## Incomplete milestones
 

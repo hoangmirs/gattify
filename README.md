@@ -25,9 +25,11 @@ Requirements: Node 22+, npm 11+, Rust 1.89, and platform SDKs for native builds.
 
     npm install
     npm test
+    npm run build
     cargo fmt --all --check
     cargo test --workspace --all-features
     cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo test --manifest-path examples/gattify-lab/src-tauri/Cargo.toml
 
 A consumer registers the Rust plugin:
 
