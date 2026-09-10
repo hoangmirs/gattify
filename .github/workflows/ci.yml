@@ -72,7 +72,9 @@ jobs:
           npm run tauri --workspace examples/gattify-lab -- android build --ci --debug --apk --target aarch64
       - name: Run the plugin's Kotlin unit tests
         working-directory: examples/gattify-lab/src-tauri/gen/android
-        run: ./gradlew :tauri-plugin-gattify:testDebugUnitTest
+        run: |
+          ./gradlew :tauri-plugin-gattify:testDebugUnitTest
+          test -s "$GITHUB_WORKSPACE/crates/tauri-plugin-gattify/android/build/test-results/testDebugUnitTest/TEST-dev.gattify.plugin.ExecuteResultTest.xml"
 
   ios:
     if: github.event_name != 'push'
@@ -88,7 +90,6 @@ jobs:
       - name: Run the plugin's Swift unit tests on a simulator
         working-directory: crates/tauri-plugin-gattify/ios
         run: |
-          xcodebuild -list
           UDID=$(xcrun simctl list devices available --json | python3 -c 'import json, sys; devices = json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime, ds in devices.items() if "iOS" in runtime for d in ds if d["name"].startswith("iPhone")))')
           xcodebuild test -scheme tauri-plugin-gattify -destination "id=$UDID" -skipPackagePluginValidation
 
@@ -101,4 +102,4 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Fuzz frame decoding for 60 seconds
-        run: cargo +nightly fuzz run --fuzz-dir fuzz --target x86_64-unknown-linux-gnu frame_decode -- -max_total_time=60
+        run: cargo +nightly fuzz run --fuzz-dir fuzz --target x86_64-unknown-linux-gnu frame_decode -- -max_total_time=60 -max_len=16400
