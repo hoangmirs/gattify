@@ -13,7 +13,6 @@ import app.tauri.annotation.Permission
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Channel
 import app.tauri.plugin.Invoke
-import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 
 @InvokeArg
@@ -47,16 +46,12 @@ class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
 
   @Command
   fun execute(invoke: Invoke) {
-    when (val kind = invoke.getArgs().getJSObject("command")?.getString("kind")) {
-      "getState" -> invoke.resolve(reply("state").put("payload", state()))
-      "getCapabilities" -> invoke.resolve(reply("capabilities").put("payload", capabilities()))
-      "checkPermissions" -> invoke.resolve(reply("permissions").put("payload", unknownPermissions()))
-      "cancel", "closeOwner" -> invoke.resolve(reply("empty"))
-      else -> invoke.reject("the Android backend does not implement $kind yet", "unsupported")
+    val kind = invoke.getArgs().getJSObject("command")?.getString("kind")
+    when (val result = executeResult(kind) { state() }) {
+      is ExecuteResult.Resolve -> invoke.resolve(result.reply)
+      is ExecuteResult.Reject -> invoke.reject(result.message, result.code)
     }
   }
-
-  private fun reply(kind: String): JSObject = JSObject().put("kind", kind)
 
   private fun state(): String = when {
     adapter == null -> "unavailable"
@@ -66,21 +61,4 @@ class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
     adapter?.isEnabled == true -> "poweredOn"
     else -> "poweredOff"
   }
-
-  private fun capabilities(): JSObject {
-    val notImplemented = unknown("backendNotImplemented")
-    return JSObject()
-      .put("central", notImplemented)
-      .put("peripheral", notImplemented)
-      .put("advertising", notImplemented)
-      .put("targetedNotify", notImplemented)
-      .put("simultaneousRoles", notImplemented)
-      .put("background", JSObject().put("level", "unsupported").put("reason", "foregroundOnlyContract"))
-  }
-
-  private fun unknownPermissions(): JSObject =
-    JSObject().put("scan", "unknown").put("connect", "unknown").put("advertise", "unknown")
-
-  private fun unknown(reason: String): JSObject =
-    JSObject().put("level", "unknown").put("reason", reason)
 }
