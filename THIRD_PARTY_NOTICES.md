@@ -12,7 +12,7 @@ Direct development dependencies currently declared:
 - tauri-plugin (build dependency) — Apache-2.0 OR MIT.
 - The Tauri Android library and Swift package, linked from the tauri crate — Apache-2.0 OR MIT.
 - junit:junit 4.13.2 (Android unit tests only) — EPL-1.0.
-- org.json:json 20240303 (Android unit tests only) — public domain.
+- org.json:json 20260814 (Android unit tests only) — public domain.
 
 This is not yet a release-complete transitive notice inventory.
 
