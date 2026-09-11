@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 tauri-plugin-gattify = { path = "../crates/tauri-plugin-gattify", default-features = false }
-libfuzzer-sys = "0.4.9"
+libfuzzer-sys = "=0.4.13"
 
 [[bin]]
 name = "frame_decode"

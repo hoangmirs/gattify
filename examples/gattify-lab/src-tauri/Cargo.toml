@@ -9,14 +9,14 @@ name = "gattify_lab_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.5", features = [] }
+tauri = { version = "=2.11.5", features = [] }
 tauri-plugin-gattify = { path = "../../../crates/tauri-plugin-gattify" }
 
 [dev-dependencies]
-serde_json = "1"
-tauri = { version = "2.11.5", features = ["test"] }
+serde_json = "=1.0.151"
+tauri = { version = "=2.11.5", features = ["test"] }
 
 [workspace]

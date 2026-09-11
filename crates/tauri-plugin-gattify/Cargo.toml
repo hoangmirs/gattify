@@ -26,10 +26,10 @@ tauri = { workspace = true, optional = true }
 tauri = { workspace = true, optional = true, features = ["wry"] }
 
 [build-dependencies]
-tauri-plugin = { version = "2.6.3", features = ["build"], optional = true }
+tauri-plugin = { version = "=2.6.3", features = ["build"], optional = true }
 
 [dev-dependencies]
-futures-lite = "2.6.1"
+futures-lite = "=2.6.1"
 
 [lints]
 workspace = true
