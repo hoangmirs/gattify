@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-execute-advertise"
-description = "Allows starting and stopping BLE advertising."
-commands.allow = ["execute_advertise"]
-
-[[permission]]
-identifier = "deny-execute-advertise"
-description = "Denies starting and stopping BLE advertising."
-commands.deny = ["execute_advertise"]

@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-close-peer"
-description = "Allows closing an owned BLE peer connection."
-commands.allow = ["close_peer"]
-
-[[permission]]
-identifier = "deny-close-peer"
-description = "Denies closing BLE peer connections."
-commands.deny = ["close_peer"]

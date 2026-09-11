@@ -9,8 +9,10 @@ Direct development dependencies currently declared:
   permissive Rust ecosystem licenses; exact resolved versions and transitive
   terms must be confirmed from lockfiles before release.
 - TypeScript — Apache-2.0.
-- AndroidX Annotation — Apache-2.0.
-- tauri-swift — Apache-2.0 OR MIT.
+- tauri-plugin (build dependency) — Apache-2.0 OR MIT.
+- The Tauri Android library and Swift package, linked from the tauri crate — Apache-2.0 OR MIT.
+- junit:junit 4.13.2 (Android unit tests only) — EPL-1.0.
+- org.json:json 20260814 (Android unit tests only) — public domain.
 
 This is not yet a release-complete transitive notice inventory.
 

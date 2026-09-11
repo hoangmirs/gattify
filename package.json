@@ -1,5 +1,5 @@
 {
-  "name": "tauri-ble-workspace",
+  "name": "gattify-workspace",
   "private": true,
   "version": "0.1.0",
   "packageManager": "npm@11.12.1",
@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspace packages/plugin-ble",
+    "typecheck": "npm run typecheck --workspace packages/plugin-gattify",
     "test": "npm run test --workspaces --if-present"
   }
 }

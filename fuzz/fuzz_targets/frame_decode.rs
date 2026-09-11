@@ -1,6 +1,6 @@
 #![no_main]
 
-use ble_peer::Frame;
+use tauri_plugin_gattify::peer::Frame;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|bytes: &[u8]| {

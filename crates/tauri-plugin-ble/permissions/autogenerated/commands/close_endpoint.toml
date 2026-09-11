@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-close-endpoint"
-description = "Allows closing an owned BLE peer endpoint."
-commands.allow = ["close_endpoint"]
-
-[[permission]]
-identifier = "deny-close-endpoint"
-description = "Denies closing BLE peer endpoints."
-commands.deny = ["close_endpoint"]

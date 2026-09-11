@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-execute-connect"
-description = "Allows BLE connections and GATT client procedures."
-commands.allow = ["execute_connect"]
-
-[[permission]]
-identifier = "deny-execute-connect"
-description = "Denies BLE connections and GATT client procedures."
-commands.deny = ["execute_connect"]

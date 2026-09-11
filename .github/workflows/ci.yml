@@ -2,35 +2,106 @@ name: CI
 
 on:
   push:
+    branches: [main, develop]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
         with:
           toolchain: 1.89.0
           components: rustfmt, clippy
       - run: cargo fmt --all --check
       - run: cargo test --locked --workspace --all-features
+      - run: cargo test --locked --workspace --no-default-features
+      - run: cargo check --locked --manifest-path fuzz/Cargo.toml
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: cargo test --locked --manifest-path examples/gattify-lab/src-tauri/Cargo.toml
 
   typescript:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
-      - run: npm pack --workspace packages/plugin-ble --dry-run
-      - run: cmp LICENSE packages/plugin-ble/LICENSE
+      - run: npm pack --workspace packages/plugin-gattify --dry-run
+      - run: cmp LICENSE packages/plugin-gattify/LICENSE
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.89.0
+          targets: aarch64-linux-android
+      - run: npm ci
+      - run: npm run build
+      - name: Generate the lab app's Android project
+        run: npm run tauri --workspace examples/gattify-lab -- android init --ci --skip-targets-install
+      - name: Build the lab app for Android
+        run: |
+          if [ -n "${ANDROID_NDK_HOME:-}" ]; then export NDK_HOME="$ANDROID_NDK_HOME"; fi
+          npm run tauri --workspace examples/gattify-lab -- android build --ci --debug --apk --target aarch64
+      - name: Run the plugin's Kotlin unit tests
+        working-directory: examples/gattify-lab/src-tauri/gen/android
+        run: |
+          ./gradlew :tauri-plugin-gattify:testDebugUnitTest
+          test -s "$GITHUB_WORKSPACE/crates/tauri-plugin-gattify/android/build/test-results/testDebugUnitTest/TEST-dev.gattify.plugin.ExecuteResultTest.xml"
+
+  ios:
+    if: github.event_name != 'push'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.89.0
+          targets: aarch64-apple-ios
+      - name: Compile the plugin and its Swift package for iOS
+        run: cargo build --locked -p tauri-plugin-gattify --target aarch64-apple-ios
+      - name: Run the plugin's Swift unit tests on a simulator
+        working-directory: crates/tauri-plugin-gattify/ios
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 -c 'import json, sys; devices = json.load(sys.stdin)["devices"]; print(next(d["udid"] for runtime, ds in devices.items() if "iOS" in runtime for d in ds if d["name"].startswith("iPhone")))')
+          xcodebuild test -scheme tauri-plugin-gattify -destination "id=$UDID" -skipPackagePluginValidation
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: nightly-2026-09-10
+      - uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-fuzz@0.13.2
+      - name: Fuzz frame decoding for 60 seconds
+        run: cargo +nightly-2026-09-10 fuzz run --fuzz-dir fuzz --target x86_64-unknown-linux-gnu frame_decode -- -max_total_time=60 -max_len=16400

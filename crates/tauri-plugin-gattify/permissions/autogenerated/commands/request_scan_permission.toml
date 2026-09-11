@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-request-scan-permission"
+description = "Enables the request_scan_permission command without any pre-configured scope."
+commands.allow = ["request_scan_permission"]
+
+[[permission]]
+identifier = "deny-request-scan-permission"
+description = "Denies the request_scan_permission command without any pre-configured scope."
+commands.deny = ["request_scan_permission"]

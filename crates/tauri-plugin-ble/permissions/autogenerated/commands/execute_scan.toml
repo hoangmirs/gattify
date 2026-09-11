@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-execute-scan"
-description = "Allows starting and stopping BLE scans."
-commands.allow = ["execute_scan"]
-
-[[permission]]
-identifier = "deny-execute-scan"
-description = "Denies starting and stopping BLE scans."
-commands.deny = ["execute_scan"]
