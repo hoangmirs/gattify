@@ -16,10 +16,11 @@ mod mock;
 mod model;
 pub mod peer;
 mod system;
+mod uuid;
 
 use std::sync::Arc;
 
-pub use backend::{Backend, Command, Event, OperationContext, Reply};
+pub use backend::{Backend, Command, Event, EventSink, OperationContext, Reply};
 #[cfg(feature = "tauri")]
 pub use commands::init;
 pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
@@ -28,6 +29,7 @@ pub use manager::Manager;
 pub use mock::MockBackend;
 pub use model::*;
 use system::SystemBackend;
+pub use uuid::normalize_uuid;
 
 #[derive(Clone)]
 pub struct BleRuntime {
