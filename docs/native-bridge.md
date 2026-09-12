@@ -290,7 +290,10 @@ Reply: `{ "kind": "connected", "payload": { "connectionId", "limits": LinkLimits
 - Android: `connectGatt(context, false, callback, TRANSPORT_LE)`. On
   `STATE_CONNECTED`, call `requestMtu(517)`. Resolve on `onMtuChanged`. When the
   MTU request fails, or no answer arrives within 5 s, resolve with an MTU of 23.
-- iOS: `connect(peripheral)`. Resolve on `didConnect`.
+- iOS: `connect(peripheral)`. After `didConnect`, iOS still reports 20-byte
+  values until its MTU exchange ends. Resolve when
+  `maximumWriteValueLength(for: .withoutResponse)` exceeds 20, or 1 s after
+  `didConnect`.
 
 `LinkLimits`:
 

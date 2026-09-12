@@ -1,6 +1,11 @@
 import CoreBluetooth
 import Foundation
 
+/// The value length of a link before its MTU exchange: an ATT MTU of 23 minus 3.
+let minimumAttributeValueLength = 20
+let linkLimitWaitMilliseconds: UInt64 = 1_000
+let linkLimitPollMilliseconds: UInt64 = 50
+
 final class DeviceRecord {
   let id: String
   /// iOS invalidates its peripheral objects when the adapter resets, so discovery refreshes this.
@@ -108,6 +113,8 @@ final class ConnectionRecord {
   let device: DeviceRecord
   var state = State.connecting
   var connectOperation: BridgeOperation?
+  /// iOS reported the connection. The connect still waits for the MTU exchange.
+  var linkUp = false
   var closeStarted = false
   var closeTimer: DispatchWorkItem?
   var releaseTimer: DispatchWorkItem?
@@ -649,9 +656,27 @@ extension GattifyEngine: CBCentralManagerDelegate {
       }
       return
     }
+    link.linkUp = true
+    awaitLinkLimits(link, operation, waited: 0)
+  }
+
+  /// iOS negotiates the MTU after `didConnect`, and until then reports 20-byte values. Frames
+  /// that small make a 4 KiB message take seconds, so the connect waits up to 1 s for the
+  /// negotiated length, as the Android connect waits for its MTU reply.
+  func awaitLinkLimits(_ link: ConnectionRecord, _ operation: BridgeOperation, waited: UInt64) {
+    guard !operation.isFinished, link.state == .connecting, connections[link.id] === link else {
+      return
+    }
+    let length = link.peripheral.maximumWriteValueLength(for: .withoutResponse)
+    if length <= minimumAttributeValueLength && waited < linkLimitWaitMilliseconds {
+      schedule(after: linkLimitPollMilliseconds) { [weak self, weak link] in
+        guard let self, let link else { return }
+        self.awaitLinkLimits(link, operation, waited: waited + linkLimitPollMilliseconds)
+      }
+      return
+    }
     link.state = .connected
     link.connectOperation = nil
-    let length = peripheral.maximumWriteValueLength(for: .withoutResponse)
     operation.resolve(
       .connected(connectionId: link.id, limits: LinkLimits(maximumWriteValueLength: length)))
   }
@@ -678,8 +703,14 @@ extension GattifyEngine: CBCentralManagerDelegate {
     guard let link = devices[peripheral.identifier]?.connection else { return }
     switch link.state {
     case .connecting:
-      // The late callback of an attempt that was cancelled before this one started.
-      return
+      guard link.linkUp else {
+        // The late callback of an attempt that was cancelled before this one started.
+        return
+      }
+      // The link dropped while the connect waited for the MTU exchange.
+      let operation = link.connectOperation
+      detach(link)
+      operation?.reject(.disconnected("the link closed before the connection was ready"))
     case .connected:
       closeLink(link, rejecting: .disconnected("the link closed"), notify: true, linkDown: true)
     case .closing:
