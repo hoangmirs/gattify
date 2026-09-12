@@ -30,6 +30,23 @@ class QueuesTest {
   }
 
   @Test
+  fun `enqueueFirst runs right after the operation in flight`() {
+    val queue = OpQueue<Op>()
+    val write = Op("subscribe A")
+    val later = Op("subscribe B")
+    queue.enqueue(write)
+    queue.next()
+    queue.enqueue(later)
+    // A rollback of A must not run after B, or it would disable B.
+    val rollback = Op("rollback A")
+    queue.enqueueFirst(rollback)
+    queue.complete(write)
+    assertSame(rollback, queue.next())
+    queue.complete(rollback)
+    assertSame(later, queue.next())
+  }
+
+  @Test
   fun `next drops settled operations`() {
     val queue = OpQueue<Op>()
     queue.enqueue(Op("cancelled", settled = true))

@@ -16,6 +16,11 @@ internal class OpQueue<T : Any> {
     waiting.addLast(op)
   }
 
+  /** Queues [op] ahead of every waiting operation, to run right after the one in flight. */
+  fun enqueueFirst(op: T) {
+    waiting.addFirst(op)
+  }
+
   /** Takes the next operation when none is in flight. Drops each waiting one that [skip] matches. */
   fun next(skip: (T) -> Boolean = { false }): T? {
     if (inFlight != null) return null

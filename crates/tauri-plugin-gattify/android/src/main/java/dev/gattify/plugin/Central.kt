@@ -38,10 +38,20 @@ internal class Central(private val backend: GattifyBackend) {
     val fail: (BleException) -> Unit = { procedure?.reject(it) },
   ) {
     var watchdog: Cancellable? = null
+
+    /** When the procedure passes its deadline, on the scheduler clock. */
+    var deadlineAt: Long? = null
   }
 
   private class Subscription(val id: String, val owner: String, val connection: Connection, val handle: String) {
+    /** The descriptor write succeeded, and Rust has the ID. */
     var active = false
+
+    /** A cancel ended the subscribe while its descriptor write ran. The reservation holds until the rollback. */
+    var cancelled = false
+
+    /** An unsubscribe runs. No value is emitted meanwhile. */
+    var disabling = false
   }
 
   private inner class Connection(val id: String, val owner: String, val deviceId: String) : BluetoothGattCallback() {
@@ -260,72 +270,129 @@ internal class Central(private val backend: GattifyBackend) {
       BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
     }
 
-    // The reservation makes a second subscribe busy while the first one runs.
+    // The reservation makes another subscribe to this characteristic busy until this one ends,
+    // including the rollback of a cancelled one, so the rollback never disables a later subscription.
     val subscription = Subscription(backend.ids.next("subscription"), connection.owner, connection, handle)
     connection.subscriptions[handle] = subscription
-    val reserved = { connection.subscriptions[handle] === subscription }
-    val release = { if (reserved()) connection.subscriptions.remove(handle) }
-    procedure.onAbort { release() }
-    enqueue(
-      connection,
-      Op(
-        OpKind.DESCRIPTOR_WRITE,
-        procedure,
-        descriptor = cccd,
-        issue = { gatt ->
-          if (!gatt.setCharacteristicNotification(characteristic, true)) {
-            throw internalError("setCharacteristicNotification returned false")
+    fun release() {
+      if (connection.subscriptions[handle] === subscription) connection.subscriptions.remove(handle)
+    }
+    fun disableLocally() {
+      connection.gatt?.let { gatt -> quietly { gatt.setCharacteristicNotification(characteristic, false) } }
+    }
+    val op = Op(
+      OpKind.DESCRIPTOR_WRITE,
+      procedure,
+      descriptor = cccd,
+      issue = { gatt ->
+        if (!gatt.setCharacteristicNotification(characteristic, true)) {
+          throw internalError("setCharacteristicNotification returned false")
+        }
+        writeDescriptor(gatt, cccd, enable)
+      },
+      complete = { status, _ ->
+        val success = status == BluetoothGatt.GATT_SUCCESS
+        when {
+          subscription.cancelled -> if (success) {
+            rollback(connection, characteristic, cccd) { release() }
+          } else {
+            disableLocally()
+            release()
           }
-          writeDescriptor(gatt, cccd, enable)
-        },
-        complete = { status, _ ->
-          val success = status == BluetoothGatt.GATT_SUCCESS
-          if (!reserved()) {
-            // A cancel ended the subscribe while the descriptor write ran: undo it.
-            if (success) rollback(connection, characteristic, cccd)
-          } else if (success) {
+          success -> {
             subscription.active = true
             subscriptions[subscription.id] = subscription
             procedure.resolve(Replies.subscriptionStarted(subscription.id))
-          } else {
+          }
+          else -> {
             release()
-            connection.gatt?.let { gatt -> quietly { gatt.setCharacteristicNotification(characteristic, false) } }
+            disableLocally()
             procedure.reject(gattStatusError(status, "subscribe"))
           }
-        },
-        fail = { error ->
-          release()
-          connection.gatt?.let { gatt -> quietly { gatt.setCharacteristicNotification(characteristic, false) } }
-          procedure.reject(error)
-        },
-      ),
-      deadlineFor("subscribe", request.deadlineMillis),
+        }
+      },
+      fail = { error ->
+        release()
+        disableLocally()
+        procedure.reject(error)
+      },
     )
+    procedure.onAbort {
+      // Before its write, the subscribe just ends. During it, the stack may still enable notifications.
+      if (connection.queue.inFlight === op) subscription.cancelled = true else release()
+    }
+    enqueue(connection, op, deadlineFor("subscribe", request.deadlineMillis))
   }
 
   fun unsubscribe(request: Request, procedure: Procedure) {
     val id = request.payload().requireString("subscriptionId")
     val subscription = subscriptions[id]?.takeIf { it.owner == request.ownerId } ?: throw invalidHandle(id)
+    if (subscription.disabling) throw busy("$id is already ending")
     val connection = subscription.connection
-    subscriptions.remove(id)
-    connection.subscriptions.remove(subscription.handle)
     val characteristic = connection.handles[subscription.handle]
     val cccd = characteristic?.getDescriptor(CCCD_UUID)
     if (connection.phase != Phase.CONNECTED || characteristic == null || cccd == null) {
+      forget(subscription)
       procedure.resolve(Replies.empty())
       return
     }
-    enqueue(
-      connection,
-      Op(
-        OpKind.DESCRIPTOR_WRITE,
-        procedure,
-        descriptor = cccd,
-        issue = { gatt -> disableNotifications(gatt, characteristic, cccd) },
-        complete = { _, _ -> procedure.resolve(Replies.empty()) },
-      ),
-      deadlineFor("unsubscribe", request.deadlineMillis),
+    // The subscription stays until the peripheral stops notifying, but emits nothing more.
+    subscription.disabling = true
+    val op = Op(
+      OpKind.DESCRIPTOR_WRITE,
+      procedure,
+      descriptor = cccd,
+      issue = { gatt -> disableNotifications(gatt, characteristic, cccd) },
+      complete = { status, _ ->
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+          forget(subscription)
+          procedure.resolve(Replies.empty())
+        } else {
+          unsubscribeFailed(subscription, characteristic, gattStatusError(status, "unsubscribe"), procedure)
+        }
+      },
+      fail = { error -> unsubscribeFailed(subscription, characteristic, error, procedure) },
     )
+    procedure.onAbort {
+      // Before its write, the subscription stays as it was.
+      if (connection.queue.inFlight !== op) subscription.disabling = false
+    }
+    enqueue(connection, op, deadlineFor("unsubscribe", request.deadlineMillis))
+  }
+
+  /**
+   * The peripheral may still notify after a failed disable. The subscription stays
+   * with its ID, and notifications flow again. When the local switch cannot be turned
+   * back on, the state cannot be reconciled, so the link closes.
+   */
+  @SuppressLint("MissingPermission")
+  private fun unsubscribeFailed(
+    subscription: Subscription,
+    characteristic: BluetoothGattCharacteristic,
+    error: BleException,
+    procedure: Procedure,
+  ) {
+    procedure.reject(error)
+    val connection = subscription.connection
+    val gatt = connection.gatt
+    // A closing link ends the subscription itself.
+    if (connection.phase != Phase.CONNECTED || gatt == null || subscriptions[subscription.id] !== subscription) return
+    val restored = try {
+      gatt.setCharacteristicNotification(characteristic, true)
+    } catch (_: SecurityException) {
+      false
+    }
+    if (restored) {
+      subscription.disabling = false
+    } else {
+      close(connection, emit = true, error = disconnected("a failed unsubscribe left the link in an unknown state"))
+    }
+  }
+
+  private fun forget(subscription: Subscription) {
+    subscriptions.remove(subscription.id)
+    val connection = subscription.connection
+    if (connection.subscriptions[subscription.handle] === subscription) connection.subscriptions.remove(subscription.handle)
   }
 
   /** Closes every connection of [ownerId], or every connection when it is null. Emits nothing. */
@@ -444,12 +511,14 @@ internal class Central(private val backend: GattifyBackend) {
 
   private fun changed(connection: Connection, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
     val handle = connection.handles.idOf(characteristicKey(characteristic)) ?: return
-    val subscription = connection.subscriptions[handle]?.takeIf { it.active } ?: return
+    val subscription = connection.subscriptions[handle]?.takeIf { it.active && !it.disabling } ?: return
     backend.emit(subscription.owner, Events.characteristicValue(subscription.id, value))
   }
 
   private fun enqueue(connection: Connection, op: Op, deadline: Long?) {
     op.procedure?.let { procedure ->
+      val limit = deadline ?: Deadlines.PROCEDURE_MS
+      op.deadlineAt = backend.scheduler.now() + limit
       procedure.onAbort { error ->
         if (connection.queue.inFlight !== op) return@onAbort
         // A late callback must never answer a later procedure, so a stuck procedure closes the link.
@@ -460,16 +529,17 @@ internal class Central(private val backend: GattifyBackend) {
           watch(connection, op)
         }
       }
-      procedure.armDeadline(deadline)
+      procedure.armDeadline(limit)
     }
     connection.queue.enqueue(op)
     pump(connection)
   }
 
-  /** Closes the link when [op] is still in flight after the procedure deadline. */
+  /** Closes the link when [op] is still in flight at its deadline, or after the default one for a rollback. */
   private fun watch(connection: Connection, op: Op) {
+    val delay = op.deadlineAt?.let { (it - backend.scheduler.now()).coerceAtLeast(0) } ?: Deadlines.PROCEDURE_MS
     op.watchdog?.cancel()
-    op.watchdog = backend.scheduler.schedule(Deadlines.PROCEDURE_MS) {
+    op.watchdog = backend.scheduler.schedule(delay) {
       if (connection.queue.inFlight === op) {
         close(connection, emit = true, error = disconnected("a GATT procedure passed its deadline"))
       }
@@ -519,22 +589,31 @@ internal class Central(private val backend: GattifyBackend) {
   private fun same(a: BluetoothGattCharacteristic?, b: BluetoothGattCharacteristic?): Boolean =
     a === b || (a != null && b != null && a.uuid == b.uuid && a.instanceId == b.instanceId)
 
-  /** Undoes the descriptor write of a cancelled subscribe. */
-  private fun rollback(connection: Connection, characteristic: BluetoothGattCharacteristic, cccd: BluetoothGattDescriptor) {
-    connection.queue.enqueue(
+  /** Undoes the descriptor write of a cancelled subscribe, ahead of every waiting procedure. Then calls [done]. */
+  private fun rollback(
+    connection: Connection,
+    characteristic: BluetoothGattCharacteristic,
+    cccd: BluetoothGattDescriptor,
+    done: () -> Unit,
+  ) {
+    connection.queue.enqueueFirst(
       Op(
         OpKind.DESCRIPTOR_WRITE,
         null,
         descriptor = cccd,
         issue = { gatt -> disableNotifications(gatt, characteristic, cccd) },
-        complete = { _, _ -> },
+        complete = { _, _ -> done() },
+        fail = { done() },
       ),
     )
   }
 
+  /** Disables notifications locally, then writes the CCCD. Throws when either call fails at once. */
   @SuppressLint("MissingPermission")
   private fun disableNotifications(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, cccd: BluetoothGattDescriptor) {
-    gatt.setCharacteristicNotification(characteristic, false)
+    if (!gatt.setCharacteristicNotification(characteristic, false)) {
+      throw internalError("setCharacteristicNotification returned false")
+    }
     writeDescriptor(gatt, cccd, BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE)
   }
 
