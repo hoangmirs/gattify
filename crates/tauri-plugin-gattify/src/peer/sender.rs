@@ -200,6 +200,32 @@ impl Sender {
         }
     }
 
+    /// Restarts the ACK deadline once the last fragment of `message_id` is written.
+    ///
+    /// Writing many fragments can take longer than the ACK deadline. Counting
+    /// from the last fragment keeps a slow link from retransmitting forever.
+    pub fn mark_submitted(&mut self, message_id: u32, now_ms: u64) {
+        if let Some(pending) = &mut self.pending {
+            if pending.message.message_id == message_id {
+                pending.last_submitted_ms = now_ms;
+            }
+        }
+    }
+
+    /// The message that waits for its ACK.
+    #[must_use]
+    pub fn in_flight(&self) -> Option<u32> {
+        self.pending
+            .as_ref()
+            .map(|pending| pending.message.message_id)
+    }
+
+    /// Whether a message waits for its ACK or in the queue.
+    #[must_use]
+    pub fn has_work(&self) -> bool {
+        self.pending.is_some() || !self.queue.is_empty()
+    }
+
     pub fn disconnect(&mut self) -> Vec<QueuedMessage> {
         let mut failed = Vec::new();
         if let Some(pending) = self.pending.take() {
@@ -291,6 +317,46 @@ mod tests {
             sender.poll(1),
             SendAction::Submit { message_id, .. } if message_id == second
         ));
+    }
+
+    #[test]
+    fn work_and_the_in_flight_message_are_visible() {
+        let mut sender = Sender::default();
+        assert!(!sender.has_work());
+        assert_eq!(sender.in_flight(), None);
+        let message_id = sender.enqueue(Vec::new()).unwrap();
+        assert!(sender.has_work());
+        assert_eq!(sender.in_flight(), None);
+        sender.poll(0);
+        assert!(sender.has_work());
+        assert_eq!(sender.in_flight(), Some(message_id));
+        sender.acknowledge(message_id).unwrap();
+        assert!(!sender.has_work());
+    }
+
+    #[test]
+    fn the_ack_deadline_counts_from_the_last_fragment() {
+        let mut sender = Sender::default();
+        let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
+        sender.poll(0);
+        sender.mark_submitted(message_id, 4_000);
+        assert_eq!(sender.poll(8_999), SendAction::Idle);
+        assert!(matches!(
+            sender.poll(9_000),
+            SendAction::Submit {
+                retransmission: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn marking_another_message_changes_nothing() {
+        let mut sender = Sender::default();
+        let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
+        sender.poll(0);
+        sender.mark_submitted(message_id + 1, 4_000);
+        assert!(matches!(sender.poll(5_000), SendAction::Submit { .. }));
     }
 
     #[test]
