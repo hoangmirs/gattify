@@ -13,12 +13,15 @@ use tokio::sync::mpsc;
 
 use crate::{
     events::{webview_owner, EventHub, Router},
+    gate::{PageGate, Pass},
     peer::{peer_owner, EndpointOptions, PeerDriver, PeerEmitter, SendReceipt},
     BleError, BleResult, BleRuntime, Command, DeliveryOutcome, DeviceId, ErrorCode, EventSink,
     OperationId, PeerId, PermissionRequest, Reply, ScopeGuard, ServiceScope,
 };
 
 const DEFAULT_SEND_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a cleanup waits for the commands of the old page.
+const CLEANUP_WAIT: Duration = Duration::from_secs(20);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,15 +57,14 @@ fn service_scope(scope: &GlobalScope<ScopeEntry>) -> ServiceScope {
     )
 }
 
-/// Holds back the commands of a webview while the resources of its previous
-/// page are released, so the cleanup cannot close what the new page opens.
+/// The [`PageGate`] of each webview.
 #[derive(Default)]
-struct CleanupGates {
-    gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+struct PageGates {
+    gates: Mutex<HashMap<String, Arc<PageGate>>>,
 }
 
-impl CleanupGates {
-    fn gate(&self, label: &str) -> Arc<tokio::sync::Mutex<()>> {
+impl PageGates {
+    fn gate(&self, label: &str) -> Arc<PageGate> {
         self.gates
             .lock()
             .entry(label.to_owned())
@@ -70,9 +72,8 @@ impl CleanupGates {
             .clone()
     }
 
-    async fn wait(&self, label: &str) {
-        let gate = self.gate(label);
-        drop(gate.lock().await);
+    async fn enter(&self, label: &str) -> Pass {
+        self.gate(label).enter().await
     }
 }
 
@@ -81,7 +82,7 @@ struct Gattify {
     driver: PeerDriver,
     guard: Arc<ScopeGuard>,
     hub: Arc<EventHub>,
-    gates: CleanupGates,
+    gates: PageGates,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,7 +135,7 @@ async fn execute_request<R: Runtime>(
             "command is not permitted through this role-specific endpoint",
         ));
     }
-    state.gates.wait(webview.label()).await;
+    let _pass = state.gates.enter(webview.label()).await;
     let owner = webview_owner(webview.label());
     let scope = service_scope(&scope);
     let command = state.guard.authorize(&scope, &owner, request.command)?;
@@ -337,7 +338,7 @@ async fn create_endpoint<R: Runtime>(
     scope: GlobalScope<ScopeEntry>,
     mut options: EndpointOptions,
 ) -> BleResult<EndpointCreated> {
-    state.gates.wait(webview.label()).await;
+    let _pass = state.gates.enter(webview.label()).await;
     options.service_uuid = service_scope(&scope).admit(&options.service_uuid)?;
     let endpoint_id = state
         .driver
@@ -353,7 +354,7 @@ async fn dial_peer<R: Runtime>(
     endpoint_id: String,
     device_id: DeviceId,
 ) -> BleResult<PeerDialed> {
-    state.gates.wait(webview.label()).await;
+    let _pass = state.gates.enter(webview.label()).await;
     let peer_id = state
         .driver
         .dial(webview.label(), &endpoint_id, device_id)
@@ -375,6 +376,7 @@ async fn send_peer<R: Runtime>(
         error
     })?;
     let timeout = timeout_ms.map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
+    let _pass = state.gates.enter(webview.label()).await;
     state
         .driver
         .send(webview.label(), &peer_id, bytes, timeout)
@@ -398,6 +400,7 @@ async fn close_endpoint<R: Runtime>(
     state: State<'_, Gattify>,
     endpoint_id: String,
 ) -> BleResult<()> {
+    let _pass = state.gates.enter(webview.label()).await;
     state
         .driver
         .close_endpoint(webview.label(), &endpoint_id)
@@ -410,21 +413,32 @@ fn release_webview<R: Runtime>(app: &AppHandle<R>, label: &str) {
     let Some(state) = app.try_state::<Gattify>() else {
         return;
     };
+    // Hold back the new page before anything else, so its first command
+    // cannot run ahead of the cleanup.
+    let gate = state.gates.gate(label);
+    gate.begin_cleanup();
     state.hub.remove_label(label);
+    // Pending sends and dials of the old page fail at once.
     state.driver.forget_label(label);
     let owner = webview_owner(label);
     state.guard.forget_owner(&owner);
-    let gate = state.gates.gate(label);
-    let held = gate.clone().try_lock_owned().ok();
+
     let runtime = state.runtime.clone();
-    let peer = peer_owner(label);
+    let driver = state.driver.clone();
+    let guard = state.guard.clone();
+    let label = label.to_owned();
+    let peer = peer_owner(&label);
     tauri::async_runtime::spawn(async move {
-        let _held = match held {
-            Some(held) => held,
-            None => gate.lock_owned().await,
-        };
+        runtime.cancel_owner(&owner).await;
+        runtime.cancel_owner(&peer).await;
+        // A native layer that never answers must not block the page for good.
+        let _ = tokio::time::timeout(CLEANUP_WAIT, gate.wait_idle()).await;
+        // Commands of the old page may have registered resources until now.
+        driver.forget_label(&label);
+        guard.forget_owner(&owner);
         let _ = runtime.execute(owner, Command::CloseOwner, None).await;
         let _ = runtime.execute(peer, Command::CloseOwner, None).await;
+        gate.end_cleanup();
     });
 }
 
@@ -476,7 +490,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 driver,
                 guard,
                 hub,
-                gates: CleanupGates::default(),
+                gates: PageGates::default(),
             });
             Ok(())
         })

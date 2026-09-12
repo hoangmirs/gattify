@@ -10,6 +10,8 @@ mod commands;
 mod error;
 #[cfg(feature = "tauri")]
 mod events;
+#[cfg(any(test, feature = "tauri"))]
+mod gate;
 mod manager;
 #[cfg(any(test, target_os = "android", target_os = "ios"))]
 mod mobile;
@@ -80,6 +82,11 @@ impl BleRuntime {
         self.manager
             .execute_with_id(owner_id, operation_id, command, deadline_millis)
             .await
+    }
+
+    /// Cancels every active operation of `owner_id`, best effort.
+    pub async fn cancel_owner(&self, owner_id: &OwnerId) {
+        self.manager.cancel_owner(owner_id).await;
     }
 
     /// Cancels an active operation owned by the caller.

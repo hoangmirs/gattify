@@ -433,26 +433,26 @@ impl PeerDriver {
             max_logical_payload,
         };
         if let Err(error) = self.handshake(handshake).await {
+            let mut effects = Effects::default();
             let registered = {
                 let mut state = self.shared.state.lock();
                 let registered = state.peers.contains_key(&peer_id);
-                if registered {
-                    let mut effects = Effects::default();
-                    remove_peer(
-                        &mut state,
-                        &peer_id,
-                        Closing {
-                            reason: CloseReason::Lost,
-                            send_close: false,
-                            disconnect: true,
-                            announce: false,
-                            done: None,
-                        },
-                        &mut effects,
-                    );
-                }
+                // A peer that announced itself also announces its end.
+                remove_peer(
+                    &mut state,
+                    &peer_id,
+                    Closing {
+                        reason: CloseReason::Lost,
+                        send_close: false,
+                        disconnect: true,
+                        announce: true,
+                        done: None,
+                    },
+                    &mut effects,
+                );
                 registered
             };
+            effects.apply(&self.shared.emit);
             if !registered {
                 let _ = self
                     .execute(&owner, Command::Disconnect { connection_id })
@@ -543,14 +543,15 @@ impl PeerDriver {
                 written: Some(written_tx),
             });
         }
-        written.await.unwrap_or_else(|_| Err(link_closed()))?;
+        // A HELLO_ACK proves that the host received HELLO even when the write
+        // response was lost, so a failed write still waits for it.
+        let write_error = written.await.unwrap_or_else(|_| Err(link_closed())).err();
         match tokio::time::timeout(DIAL_TIMEOUT, acknowledged).await {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(_)) => Err(link_closed()),
-            Err(_) => Err(BleError::new(
-                ErrorCode::Timeout,
-                "the host sent no HELLO_ACK within 10 s",
-            )),
+            Ok(Err(_)) => Err(write_error.unwrap_or_else(link_closed)),
+            Err(_) => Err(write_error.unwrap_or_else(|| {
+                BleError::new(ErrorCode::Timeout, "the host sent no HELLO_ACK within 10 s")
+            })),
         }
     }
 

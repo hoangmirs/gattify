@@ -576,3 +576,37 @@ async fn a_joiner_learns_its_peer_before_the_first_message() {
     ));
     assert_eq!(joiner.next_event().await, message(&joiner_peer, b"first"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_hello_ack_proves_a_hello_whose_response_was_lost() {
+    let (air, mut host, mut joiner) = pair();
+    host.driver
+        .create_endpoint(LABEL, options(true))
+        .await
+        .unwrap();
+    let endpoint = joiner
+        .driver
+        .create_endpoint(LABEL, options(false))
+        .await
+        .unwrap();
+    air.fail_next_reply(JOINER);
+
+    let joiner_peer = joiner
+        .driver
+        .dial(LABEL, &endpoint, MockAir::device_id(HOST))
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        joiner.next_event().await,
+        PeerEvent::Ready { peer_id, dialed: true, .. } if peer_id == joiner_peer
+    ));
+    let PeerEvent::Ready {
+        peer_id: host_peer, ..
+    } = host.next_event().await
+    else {
+        panic!("expected the host peer");
+    };
+    send(&joiner, &joiner_peer, b"after").await.unwrap();
+    assert_eq!(host.next_event().await, message(&host_peer, b"after"));
+}

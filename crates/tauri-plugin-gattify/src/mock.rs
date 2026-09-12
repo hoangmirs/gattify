@@ -56,6 +56,7 @@ struct Server {
 struct Side {
     sink: EventSink,
     drop_frames: usize,
+    failed_replies: usize,
     cancelled: HashSet<String>,
     scans: HashMap<ScanId, Scan>,
     links: HashMap<ConnectionId, Link>,
@@ -69,6 +70,7 @@ impl Side {
         Self {
             sink,
             drop_frames: 0,
+            failed_replies: 0,
             cancelled: HashSet::new(),
             scans: HashMap::new(),
             links: HashMap::new(),
@@ -104,6 +106,19 @@ impl Air {
 
     fn emit(&mut self, side: usize, owner: &OwnerId, event: Event) {
         self.outbox.push((side, owner.clone(), event));
+    }
+
+    /// Whether a delivered frame should still report an error to its sender.
+    fn take_failed_reply(&mut self, side: usize) -> BleResult<Reply> {
+        let failures = &mut self.sides[side].failed_replies;
+        if *failures == 0 {
+            return Ok(Reply::Empty);
+        }
+        *failures -= 1;
+        Err(BleError::new(
+            ErrorCode::Timeout,
+            "the mock lost the response to a delivered frame",
+        ))
     }
 
     fn take_frame_drop(&mut self, side: usize) -> bool {
@@ -493,7 +508,7 @@ impl Air {
                         },
                     );
                 }
-                Ok(Reply::Empty)
+                self.take_failed_reply(side)
             }
             Command::Subscribe {
                 connection_id,
@@ -871,6 +886,12 @@ impl MockAir {
     /// still succeeds, as a lost radio frame would.
     pub fn drop_next_frame(&self, side: usize) {
         self.air.lock().sides[side].drop_frames += 1;
+    }
+
+    /// Delivers the next write that `side` sends but reports an error to it,
+    /// as when a write response is lost.
+    pub fn fail_next_reply(&self, side: usize) {
+        self.air.lock().sides[side].failed_replies += 1;
     }
 
     /// Sets the value length that connections and subscriptions report.
