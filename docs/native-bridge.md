@@ -66,6 +66,22 @@ a Rust thread through JNI on Android. BLE callbacks arrive on other threads.
 
 `Invoke.resolve` and `Invoke.reject` may run on any thread.
 
+## GATT procedures
+
+A serial thread does not serialize GATT procedures: a second request can start
+before the callback of the first. Keep one procedure outstanding per
+connection, and queue the others in order. The procedures are the MTU request,
+service discovery, a read, a write with response, and the descriptor write of
+`subscribe` and `unsubscribe`.
+
+- Check the immediate result of each platform call. When Android returns false
+  or an error status, reject the procedure at once and start the next one.
+- When a procedure reaches its deadline, reject it with `timeout`, then close the
+  connection and emit `connectionClosed`. A late callback must never answer a
+  later procedure.
+
+Independent connections run at the same time.
+
 ## Identifiers
 
 The native layer allocates every ID as an opaque string. An ID is unique for the
@@ -84,6 +100,7 @@ process and never reused.
 
 A server names a characteristic with a characteristic key:
 `<serviceInstanceKey>/<characteristicInstanceKey>`, from the `ServerDefinition`.
+Rust rejects an instance key that contains `/`, so a key never collides.
 
 ## Owners
 
@@ -136,7 +153,17 @@ deadline. Then, if the state is not `poweredOn`, the command rejects:
 
 Android rejects with `unavailable` when there is no adapter, `bluetoothOff`
 when the adapter is off, and `permissionDenied` when the runtime permission for
-the role is missing.
+the command is missing. On API 31 and later, the commands need these
+permissions:
+
+| Permission | Commands |
+| --- | --- |
+| `BLUETOOTH_SCAN` | `startScan` |
+| `BLUETOOTH_CONNECT` | `connect`, `disconnect`, `discoverServices`, `read`, `write`, `subscribe`, `unsubscribe`, `createServer`, `closeServer`, `setValue`, `notify` |
+| `BLUETOOTH_ADVERTISE` | `startAdvertising`, `stopAdvertising` |
+
+`openGattServer` needs `BLUETOOTH_CONNECT`, so a host needs both the connect
+and the advertise permission.
 
 ## Commands
 
@@ -234,7 +261,10 @@ Reply: `{ "kind": "scanStarted", "payload": { "scanId" } }`.
 }
 ```
 
-`name` is the advertised local name, else the cached device name, else null.
+`name` is the advertised local name. Else it is the service data of a scan
+filter UUID, when that data is valid UTF-8: an Android host advertises its name
+this way. Else it is the cached device name, else null. `advertisement` keeps
+the raw fields.
 `observedAtMillis` is wall-clock time in milliseconds since the Unix epoch.
 
 ### stopScan
@@ -261,10 +291,12 @@ Reply: `{ "kind": "connected", "payload": { "connectionId", "limits": LinkLimits
 ```
 
 `writeWithResponse` and `writeWithoutResponse` are the largest value that one
-ATT Write Request or Write Command carries: the ATT MTU minus 3. They are never
-the long-write maximum. On iOS use
-`peripheral.maximumWriteValueLength(for: .withoutResponse)` for all three
-lengths, and that value plus 3 as `attMtu`. On Android use the MTU minus 3.
+ATT Write Request or Write Command carries: the ATT MTU minus 3, and never more
+than 512, the longest attribute value. They are never the long-write maximum.
+`notification` follows the same rule. With an MTU of 517, every length is 512.
+On iOS use `min(peripheral.maximumWriteValueLength(for: .withoutResponse), 512)`
+for all three lengths, and the unclamped value plus 3 as `attMtu`. On Android
+use `min(mtu - 3, 512)`.
 
 ### disconnect
 
@@ -296,8 +328,10 @@ replies when every characteristic discovery finishes.
 Payload: `{ "connectionId", "characteristic" }`.
 Reply: `{ "kind": "bytes", "payload": { "valueBase64" } }`.
 
-iOS reports a read and a notification through the same callback. When a read
-is pending on a characteristic, the next value for it answers the read.
+iOS reports a read and a notification through the same callback, so it cannot
+tell them apart. On iOS, reject a read with `busy` while the characteristic has
+a subscription on the connection. Android reports them through separate
+callbacks and has no such limit.
 
 ### write
 
@@ -307,7 +341,11 @@ where `writeType` is `withResponse` or `withoutResponse`. Reply: `empty`.
 - `withResponse` resolves after the write response.
 - `withoutResponse` resolves when the stack accepts the value. On iOS, when
   `canSendWriteWithoutResponse` is false, wait for `peripheralIsReady`.
-- A value longer than 512 bytes rejects with `payloadTooLarge`.
+- A `withoutResponse` value longer than the `writeWithoutResponse` limit of the
+  connection rejects with `payloadTooLarge`.
+- A `withResponse` value longer than 512 bytes rejects with `payloadTooLarge`.
+  A `withResponse` value longer than the `writeWithResponse` limit is allowed:
+  the stack sends it as a long write.
 
 ### subscribe
 
@@ -375,8 +413,11 @@ Reply: `{ "kind": "advertisingStarted", "payload": { "localNameIncluded", "local
 - One advertisement exists per process. When another server advertises, reject
   with `busy`. When the same server advertises, restart with the new options.
 - Cut the local name at a UTF-8 character boundary to the platform budget:
-  28 bytes on iOS, 13 bytes on Android. When the name is cut and
-  `localNameOptional` is false, reject with `payloadTooLarge`.
+  8 bytes on iOS, 13 bytes on Android. On iOS, a 128-bit service UUID takes 18
+  of the 28 foreground advertising bytes, and the name field header takes 2 of
+  the rest. On Android, the scan response holds 31 bytes, and the service data
+  header and UUID take 18. When the name is cut and `localNameOptional` is
+  false, reject with `payloadTooLarge`.
 - iOS: `startAdvertising` with `CBAdvertisementDataServiceUUIDsKey` and
   `CBAdvertisementDataLocalNameKey`. Resolve on `didStartAdvertising`.
 - Android: legacy advertising, `ADVERTISE_MODE_LOW_LATENCY`, connectable, no
@@ -416,10 +457,12 @@ Reply: `empty`.
   - iOS: `updateValue(_:for:onSubscribedCentrals: [central])`. When it returns
     false, keep the value in a FIFO queue and retry on
     `peripheralManagerIsReady(toUpdateSubscribers:)`.
-  - Android: `notifyCharacteristicChanged(device, characteristic, false, value)`
-    on API 33 and later, else set the value and call the older overload. Resolve
-    on `onNotificationSent`. Reject when its status is not `GATT_SUCCESS`. Keep
-    one notification outstanding for the whole server, and queue the others.
+  - Android: `notifyCharacteristicChanged(device, characteristic, confirm, value)`
+    on API 33 and later, else set the value and call the older overload.
+    `confirm` is true when the central enabled indications, false for
+    notifications. Resolve on `onNotificationSent`. Reject when its status is
+    not `GATT_SUCCESS`, or at once when the call itself fails. Keep one
+    notification outstanding for the whole server, and queue the others.
 - Do not change the stored read value.
 
 ### cancel
@@ -458,22 +501,41 @@ Every event goes to the owner of its resource.
 
 ### Server writes
 
-When a central writes a characteristic with `write` or `writeWithoutResponse`:
+A write reaches a server as one value or as a long write in parts. A server
+assembles the parts of each characteristic before it emits anything:
 
-1. Reject a value longer than `maxValueLength` with the ATT error
-   `invalidAttributeValueLength`, and emit nothing.
-2. Answer the write when it needs a response.
-3. Emit `serverWrite`. Keep the order in which the writes arrived.
+- The parts of one characteristic start at offset 0 and are contiguous. A part
+  with any other offset fails with the ATT error `invalidOffset`.
+- The assembled value is at most `maxValueLength` long. A longer value fails with
+  `invalidAttributeValueLength`.
+- The characteristic must have `write` or `writeWithoutResponse`. Otherwise the
+  write fails with `writeNotPermitted`.
+- A write does not change the stored read value.
 
-A write does not change the stored read value. Android buffers a prepared write
-for each central and emits it once, on `onExecuteWrite` with `execute` true.
+When the value is complete and valid, answer the write when it needs a
+response, then emit one `serverWrite` for each characteristic. Keep the order
+in which the writes arrived.
+
+iOS: `didReceiveWrite` delivers a batch of requests that succeed or fail
+together. Validate the whole batch before you emit anything. Answer once, with
+`respond(to: requests[0], withResult:)`: success, or the first error. On
+success, emit one `serverWrite` for each characteristic, in the order of its
+first request.
+
+Android: a prepared write arrives as parts with `preparedWrite` true. Keep the
+parts for each central and characteristic, and answer each part with its own
+value and offset. On `onExecuteWrite` with `execute` true, emit one
+`serverWrite` for each characteristic in the order of its first part, then
+answer success. With `execute` false, or when the central disconnects, discard
+the parts.
 
 ### Subscriptions
 
 When a central enables notifications or indications on a characteristic, emit
 `subscriptionChanged` with `subscribed: true` and `maxValueLength` set to the
-notification size for that central: `central.maximumUpdateValueLength` on iOS,
-the MTU of that central minus 3 on Android, and 20 before an MTU exchange.
+notification size for that central: `min(central.maximumUpdateValueLength, 512)`
+on iOS, `min(mtu - 3, 512)` for that central on Android, and 20 before an MTU
+exchange.
 When the central disables them, or disconnects, emit `subscribed: false` with
 `maxValueLength: null`. When the MTU of a subscribed central changes on
 Android, emit `subscribed: true` again with the new size.
