@@ -15,6 +15,7 @@ mod mobile;
 mod mock;
 mod model;
 pub mod peer;
+mod scope;
 mod system;
 mod uuid;
 
@@ -28,6 +29,7 @@ pub use manager::Manager;
 #[cfg(feature = "mock")]
 pub use mock::MockBackend;
 pub use model::*;
+pub use scope::{ScopeGuard, ServiceScope};
 use system::SystemBackend;
 pub use uuid::normalize_uuid;
 
