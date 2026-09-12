@@ -3,7 +3,8 @@ import Foundation
 
 final class DeviceRecord {
   let id: String
-  let peripheral: CBPeripheral
+  /// iOS invalidates its peripheral objects when the adapter resets, so discovery refreshes this.
+  var peripheral: CBPeripheral
   /// The owner families that received this device in a scan result.
   var families: Set<String> = []
   var connection: ConnectionRecord?
@@ -109,6 +110,7 @@ final class ConnectionRecord {
   var connectOperation: BridgeOperation?
   var closeStarted = false
   var closeTimer: DispatchWorkItem?
+  var releaseTimer: DispatchWorkItem?
   var closeWaiters: [() -> Void] = []
   var characteristics: [String: CBCharacteristic] = [:]
   var subscriptions: [String: SubscriptionRecord] = [:]
@@ -225,8 +227,10 @@ extension GattifyEngine {
       self.connections[link.id] = link
       operation.onAbort = { [weak self, weak link] _ in
         guard let self, let link, link.state == .connecting else { return }
-        self.detach(link)
-        central.cancelPeripheralConnection(device.peripheral)
+        link.connectOperation = nil
+        // The attempt stays on the device until iOS reports its end, so its late callback
+        // cannot answer a new attempt.
+        self.closeLink(link, rejecting: .cancelled, notify: false)
       }
       device.peripheral.delegate = self
       central.connect(device.peripheral, options: nil)
@@ -366,7 +370,12 @@ extension GattifyEngine {
       }
       if !linkDown {
         central?.cancelPeripheralConnection(link.peripheral)
+        // The caller hears back within 2 s. The device stays reserved until iOS confirms the
+        // close, so a late callback of this link never reaches the next one.
         link.closeTimer = schedule(after: 2_000) { [weak self, weak link] in
+          if let link { self?.answerClose(link) }
+        }
+        link.releaseTimer = schedule(after: 10_000) { [weak self, weak link] in
           if let link { self?.finishClose(link) }
         }
       }
@@ -376,12 +385,18 @@ extension GattifyEngine {
     }
   }
 
-  func finishClose(_ link: ConnectionRecord) {
-    link.closeTimer?.cancel()
-    guard connections[link.id] === link else { return }
+  /// Answers the callers waiting for the close, without releasing the device.
+  func answerClose(_ link: ConnectionRecord) {
     let waiters = link.closeWaiters
     link.closeWaiters = []
     waiters.forEach { $0() }
+  }
+
+  func finishClose(_ link: ConnectionRecord) {
+    link.closeTimer?.cancel()
+    link.releaseTimer?.cancel()
+    guard connections[link.id] === link || link.device.connection === link else { return }
+    answerClose(link)
     detach(link)
   }
 
@@ -398,7 +413,12 @@ extension GattifyEngine {
   }
 
   func deviceRecord(for peripheral: CBPeripheral) -> DeviceRecord {
-    if let device = devices[peripheral.identifier] { return device }
+    if let device = devices[peripheral.identifier] {
+      if device.connection == nil {
+        device.peripheral = peripheral
+      }
+      return device
+    }
     let device = DeviceRecord(id: ids.next("device"), peripheral: peripheral)
     devices[peripheral.identifier] = device
     devicesById[device.id] = device
@@ -622,7 +642,13 @@ extension GattifyEngine: CBCentralManagerDelegate {
       central.cancelPeripheralConnection(peripheral)
       return
     }
-    guard link.state == .connecting, let operation = link.connectOperation else { return }
+    guard link.state == .connecting, let operation = link.connectOperation else {
+      if link.state == .closing {
+        // A cancelled attempt connected anyway.
+        central.cancelPeripheralConnection(peripheral)
+      }
+      return
+    }
     link.state = .connected
     link.connectOperation = nil
     let length = peripheral.maximumWriteValueLength(for: .withoutResponse)
@@ -633,9 +659,12 @@ extension GattifyEngine: CBCentralManagerDelegate {
   func centralManager(
     _ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
   ) {
-    guard let link = devices[peripheral.identifier]?.connection, link.state == .connecting else {
+    guard let link = devices[peripheral.identifier]?.connection else { return }
+    if link.state == .closing {
+      finishClose(link)
       return
     }
+    guard link.state == .connecting else { return }
     let operation = link.connectOperation
     detach(link)
     operation?.reject(
@@ -747,10 +776,29 @@ extension GattifyEngine: CBPeripheralDelegate {
     complete(request, on: link, .success(.empty))
   }
 
+  /// A remote that re-registers a service kills its subscriptions without a disconnect. When a
+  /// service in use goes away, the link closes, so the caller can dial again.
   func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
     guard let link = liveLink(peripheral) else { return }
-    link.characteristics = link.characteristics.filter { _, characteristic in
-      !invalidatedServices.contains { $0 === characteristic.service }
+    let invalidated = { (characteristic: CBCharacteristic) in
+      invalidatedServices.contains { $0 === characteristic.service }
+    }
+    let inUse = link.subscriptions.values.contains { invalidated($0.characteristic) }
+      || link.current.map { request in requestTouches(request, invalidated) } == true
+    if inUse {
+      closeLink(link, rejecting: .disconnected("the remote changed its services"), notify: true)
+      return
+    }
+    link.characteristics = link.characteristics.filter { !invalidated($0.value) }
+  }
+
+  private func requestTouches(_ request: GattRequest, _ invalidated: (CBCharacteristic) -> Bool) -> Bool {
+    switch request.kind {
+    case .discover:
+      return false
+    case .read(let characteristic), .write(let characteristic, _, _), .subscribe(let characteristic, _),
+      .unsubscribe(let characteristic):
+      return invalidated(characteristic)
     }
   }
 }
