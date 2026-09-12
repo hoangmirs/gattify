@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.0 - 2026-09-12
+
+This prerelease claims the package names. Every radio command returns `Unsupported`.
+
 - Added a release workflow. When the repository variable `RELEASE_ON_MERGE` is `true`, each merge into `develop` publishes a new minor version to crates.io and npm.
 - Renamed the project to gattify and merged the Rust crates into `tauri-plugin-gattify`.
 - Added workspace foundation, portable BLE contracts and deterministic mock.
