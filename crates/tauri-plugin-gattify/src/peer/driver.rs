@@ -40,7 +40,7 @@ use crate::{
 };
 
 /// The frame size when the native layer reports none: the ATT minimum.
-const DEFAULT_VALUE_LIMIT: usize = 20;
+const DEFAULT_VALUE_LIMIT: u32 = 20;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -510,9 +510,7 @@ impl PeerDriver {
             return Err(unexpected(&reply));
         };
 
-        let value_limit = limits
-            .write_with_response
-            .map_or(DEFAULT_VALUE_LIMIT, |limit| limit as usize);
+        let value_limit = frame_size(limits.write_with_response);
         let (hello_ack, acknowledged) = oneshot::channel();
         let (written_tx, written) = oneshot::channel();
         {
@@ -748,9 +746,7 @@ impl PeerDriver {
                         label,
                         &server_id,
                         peer_id,
-                        subscribed.then(|| {
-                            max_value_length.map_or(DEFAULT_VALUE_LIMIT, |limit| limit as usize)
-                        }),
+                        subscribed.then(|| frame_size(max_value_length)),
                         &mut effects,
                     );
                 }
@@ -848,7 +844,7 @@ impl PeerDriver {
             .notification_sizes
             .get(&central)
             .copied()
-            .unwrap_or(DEFAULT_VALUE_LIMIT);
+            .unwrap_or_else(|| frame_size(None));
         let max_logical_payload = endpoint.max_logical_payload;
         let previous = state
             .endpoints
@@ -1411,6 +1407,14 @@ fn server_definition(service_uuid: &str) -> ServerDefinition {
             ],
         }],
     }
+}
+
+/// The frame size for a reported value length: 20 bytes when unknown, and
+/// never more than one attribute holds.
+fn frame_size(reported: Option<u32>) -> usize {
+    reported
+        .unwrap_or(DEFAULT_VALUE_LIMIT)
+        .min(ATTRIBUTE_VALUE_MAX) as usize
 }
 
 /// A header-only HELLO, `HELLO_ACK` or CLOSE frame.

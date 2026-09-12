@@ -496,3 +496,35 @@ async fn an_endpoint_outside_the_limits_is_rejected() {
     assert_eq!(error.code, ErrorCode::InvalidArgument);
     assert_eq!(host.resources().await.servers, 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn frames_stay_within_the_attribute_limit_on_a_large_mtu() {
+    let (air, mut host, mut joiner) = pair();
+    air.set_value_limit(514);
+    host.driver
+        .create_endpoint(LABEL, options(true))
+        .await
+        .unwrap();
+    let endpoint = joiner
+        .driver
+        .create_endpoint(LABEL, options(false))
+        .await
+        .unwrap();
+    let joiner_peer = joiner
+        .driver
+        .dial(LABEL, &endpoint, MockAir::device_id(HOST))
+        .await
+        .unwrap();
+    let PeerEvent::Ready {
+        peer_id: host_peer, ..
+    } = host.next_event().await
+    else {
+        panic!("expected the host peer");
+    };
+    let payload = vec![7_u8; 2048];
+
+    send(&joiner, &joiner_peer, &payload).await.unwrap();
+    assert_eq!(host.next_event().await, message(&host_peer, &payload));
+    send(&host, &host_peer, &payload).await.unwrap();
+    assert_eq!(joiner.next_event().await, message(&joiner_peer, &payload));
+}

@@ -11,12 +11,14 @@ use crate::{
     validate_server_definition, AdapterState, AdvertisementData, AdvertisingOptions,
     AdvertisingReport, Backend, BleError, BleResult, Capabilities, CharacteristicHandle,
     CharacteristicInstance, Command, ConnectionId, DeviceId, DiscoveredDevice, ErrorCode, Event,
-    EventSink, LinkLimits, OperationContext, OwnerId, PeerId, PermissionOutcome, PermissionState,
-    Reply, ResourceId, ResourceSnapshot, ScanId, ServerDefinition, ServerId, ServiceHandle,
-    ServiceInstance, SubscriptionId, Support,
+    EventSink, LinkLimits, LocalCharacteristic, OperationContext, OwnerId, PeerId,
+    PermissionOutcome, PermissionState, Reply, ResourceId, ResourceSnapshot, ScanId,
+    ServerDefinition, ServerId, ServiceHandle, ServiceInstance, SubscriptionId, Support, WriteType,
 };
 
 const DEFAULT_VALUE_LIMIT: u32 = 20;
+/// The longest value one ATT attribute holds.
+const ATTRIBUTE_VALUE_MAX: u32 = 512;
 
 struct Link {
     owner: OwnerId,
@@ -31,9 +33,21 @@ struct Subscription {
     characteristic_key: String,
 }
 
+struct Scan {
+    owner: OwnerId,
+    filters: Vec<String>,
+}
+
+impl Scan {
+    fn matches(&self, service_uuid: &str) -> bool {
+        self.filters.is_empty() || self.filters.iter().any(|filter| filter == service_uuid)
+    }
+}
+
 struct Server {
     owner: OwnerId,
     definition: ServerDefinition,
+    characteristics: HashMap<String, LocalCharacteristic>,
     values: HashMap<String, Vec<u8>>,
     /// The subscribed centrals, as (side, characteristic key).
     subscribers: HashSet<(usize, String)>,
@@ -43,7 +57,7 @@ struct Side {
     sink: EventSink,
     drop_frames: usize,
     cancelled: HashSet<String>,
-    scans: HashMap<ScanId, OwnerId>,
+    scans: HashMap<ScanId, Scan>,
     links: HashMap<ConnectionId, Link>,
     subscriptions: HashMap<SubscriptionId, Subscription>,
     servers: HashMap<ServerId, Server>,
@@ -221,6 +235,39 @@ impl Air {
         }
     }
 
+    /// The definition of the characteristic behind `key` on a server.
+    fn local_characteristic(
+        &self,
+        side: usize,
+        server_id: &ServerId,
+        key: &str,
+    ) -> BleResult<&LocalCharacteristic> {
+        self.sides[side]
+            .servers
+            .get(server_id)
+            .and_then(|server| server.characteristics.get(key))
+            .ok_or_else(|| BleError::new(ErrorCode::InvalidArgument, "unknown characteristic key"))
+    }
+
+    /// Tells every matching scan on the other sides about an advertisement.
+    fn announce(&mut self, host: usize) {
+        let Some((_, advertised)) = self.sides[host].advertising.clone() else {
+            return;
+        };
+        for side in (0..self.sides.len()).filter(|side| *side != host) {
+            let scans: Vec<_> = self.sides[side]
+                .scans
+                .iter()
+                .filter(|(_, scan)| scan.matches(&advertised.service_uuid))
+                .map(|(scan_id, scan)| (scan_id.clone(), scan.owner.clone()))
+                .collect();
+            for (scan_id, owner) in scans {
+                let device = scan_result(host, &advertised, scan_id);
+                self.emit(side, &owner, Event::ScanResult { device });
+            }
+        }
+    }
+
     fn limits(&self) -> LinkLimits {
         LinkLimits {
             write_with_response: Some(self.value_limit),
@@ -270,40 +317,27 @@ impl Air {
             }
             Command::StartScan(options) => {
                 let scan_id = ScanId::new(self.allocate("scan"));
-                self.sides[side]
-                    .scans
-                    .insert(scan_id.clone(), owner.clone());
+                let scan = Scan {
+                    owner: owner.clone(),
+                    filters: options.service_uuids,
+                };
                 let found: Vec<_> = (0..self.sides.len())
                     .filter(|other| *other != side)
                     .filter_map(|other| {
                         let (_, advertised) = self.sides[other].advertising.as_ref()?;
-                        (options.service_uuids.is_empty()
-                            || options.service_uuids.contains(&advertised.service_uuid))
-                        .then(|| (other, advertised.clone()))
+                        scan.matches(&advertised.service_uuid)
+                            .then(|| scan_result(other, advertised, scan_id.clone()))
                     })
                     .collect();
-                for (other, advertised) in found {
-                    let device = DiscoveredDevice {
-                        id: MockAir::device_id(other),
-                        name: advertised.local_name.clone(),
-                        rssi: Some(-40),
-                        service_uuids: vec![advertised.service_uuid],
-                        advertisement: Some(AdvertisementData {
-                            local_name: advertised.local_name,
-                            service_data: Vec::new(),
-                            manufacturer_data: Vec::new(),
-                            connectable: Some(true),
-                        }),
-                        observed_at_millis: 0,
-                        scan_id: scan_id.clone(),
-                    };
+                self.sides[side].scans.insert(scan_id.clone(), scan);
+                for device in found {
                     self.emit(side, &owner, Event::ScanResult { device });
                 }
                 Ok(Reply::ScanStarted { scan_id })
             }
             Command::StopScan { scan_id } => {
                 match self.sides[side].scans.get(&scan_id) {
-                    Some(scan_owner) if scan_owner == &owner => {}
+                    Some(scan) if scan.owner == owner => {}
                     _ => return Err(BleError::invalid_handle(scan_id)),
                 }
                 self.sides[side].scans.remove(&scan_id);
@@ -393,11 +427,20 @@ impl Air {
                     &characteristic,
                     &owner,
                 )? {
-                    Some((remote, server_id, key)) => self.sides[remote]
-                        .servers
-                        .get(&server_id)
-                        .and_then(|server| server.values.get(&key).cloned())
-                        .unwrap_or_default(),
+                    Some((remote, server_id, key)) => {
+                        if !self
+                            .local_characteristic(remote, &server_id, &key)?
+                            .properties
+                            .read
+                        {
+                            return Err(not_permitted("the characteristic is not readable"));
+                        }
+                        self.sides[remote]
+                            .servers
+                            .get(&server_id)
+                            .and_then(|server| server.values.get(&key).cloned())
+                            .unwrap_or_default()
+                    }
                     None => Vec::new(),
                 };
                 Ok(Reply::Bytes {
@@ -408,14 +451,32 @@ impl Air {
                 connection_id,
                 characteristic,
                 value_base64,
-                ..
+                write_type,
             } => {
                 let target =
                     self.remote_characteristic(side, &connection_id, &characteristic, &owner)?;
-                decode(&value_base64)?;
+                let value = decode(&value_base64)?;
+                let single_write_limit = match write_type {
+                    WriteType::WithResponse => ATTRIBUTE_VALUE_MAX,
+                    WriteType::WithoutResponse => self.value_limit,
+                };
+                if value.len() > single_write_limit as usize {
+                    return Err(too_large("the value exceeds the write limit of the link"));
+                }
                 let Some((remote, server_id, characteristic_key)) = target else {
                     return Ok(Reply::Empty);
                 };
+                let local = self.local_characteristic(remote, &server_id, &characteristic_key)?;
+                let permitted = match write_type {
+                    WriteType::WithResponse => local.properties.write,
+                    WriteType::WithoutResponse => local.properties.write_without_response,
+                };
+                if !permitted {
+                    return Err(not_permitted("the characteristic refuses this write type"));
+                }
+                if value.len() > local.max_value_length as usize {
+                    return Err(too_large("the value exceeds the characteristic maximum"));
+                }
                 if self.take_frame_drop(side) {
                     return Ok(Reply::Empty);
                 }
@@ -440,6 +501,14 @@ impl Air {
             } => {
                 let target =
                     self.remote_characteristic(side, &connection_id, &characteristic, &owner)?;
+                if let Some((remote, server_id, key)) = &target {
+                    let properties = &self
+                        .local_characteristic(*remote, server_id, key)?
+                        .properties;
+                    if !properties.notify && !properties.indicate {
+                        return Err(not_permitted("the characteristic does not notify"));
+                    }
+                }
                 let subscription_id = SubscriptionId::new(self.allocate("subscription"));
                 let characteristic_key = target
                     .as_ref()
@@ -486,18 +555,19 @@ impl Air {
             Command::CreateServer(definition) => {
                 validate_server_definition(&definition)?;
                 let mut values = HashMap::new();
+                let mut characteristics = HashMap::new();
                 for service in &definition.services {
                     for characteristic in &service.characteristics {
+                        let key =
+                            format!("{}/{}", service.instance_key, characteristic.instance_key);
                         let value = characteristic
                             .initial_value_base64
                             .as_deref()
                             .map(decode)
                             .transpose()?
                             .unwrap_or_default();
-                        values.insert(
-                            format!("{}/{}", service.instance_key, characteristic.instance_key),
-                            value,
-                        );
+                        values.insert(key.clone(), value);
+                        characteristics.insert(key, characteristic.clone());
                     }
                 }
                 let server_id = ServerId::new(self.allocate("server"));
@@ -506,6 +576,7 @@ impl Air {
                     Server {
                         owner,
                         definition,
+                        characteristics,
                         values,
                         subscribers: HashSet::new(),
                     },
@@ -525,6 +596,7 @@ impl Air {
                     local_name_truncated: false,
                 };
                 self.sides[side].advertising = Some((server_id, options));
+                self.announce(side);
                 Ok(Reply::AdvertisingStarted(report))
             }
             Command::StopAdvertising { server_id } => {
@@ -545,6 +617,10 @@ impl Air {
             } => {
                 self.server(side, &server_id, &owner)?;
                 let value = decode(&value_base64)?;
+                let local = self.local_characteristic(side, &server_id, &characteristic_key)?;
+                if value.len() > local.max_value_length as usize {
+                    return Err(too_large("the value exceeds the characteristic maximum"));
+                }
                 if let Some(server) = self.sides[side].servers.get_mut(&server_id) {
                     server.values.insert(characteristic_key, value);
                 }
@@ -556,8 +632,17 @@ impl Air {
                 characteristic_key,
                 value_base64,
             } => {
+                let value = decode(&value_base64)?;
+                let properties = &self
+                    .local_characteristic(side, &server_id, &characteristic_key)?
+                    .properties;
+                if !properties.notify && !properties.indicate {
+                    return Err(not_permitted("the characteristic does not notify"));
+                }
+                if value.len() > self.value_limit as usize {
+                    return Err(too_large("the value exceeds the notification size"));
+                }
                 let server = self.server(side, &server_id, &owner)?;
-                decode(&value_base64)?;
                 let central = MockAir::side_of_central(&peer_id)
                     .filter(|central| {
                         server
@@ -598,9 +683,7 @@ impl Air {
                 Ok(Reply::Empty)
             }
             Command::CloseOwner => {
-                self.sides[side]
-                    .scans
-                    .retain(|_, scan_owner| scan_owner != &owner);
+                self.sides[side].scans.retain(|_, scan| scan.owner != owner);
                 let links: Vec<_> = self.sides[side]
                     .links
                     .iter()
@@ -636,7 +719,7 @@ impl Air {
                     scans: state
                         .scans
                         .values()
-                        .filter(|value| **value == owner)
+                        .filter(|scan| scan.owner == owner)
                         .count(),
                     connections: state
                         .links
@@ -657,6 +740,31 @@ impl Air {
             }
         }
     }
+}
+
+fn scan_result(side: usize, advertised: &AdvertisingOptions, scan_id: ScanId) -> DiscoveredDevice {
+    DiscoveredDevice {
+        id: MockAir::device_id(side),
+        name: advertised.local_name.clone(),
+        rssi: Some(-40),
+        service_uuids: vec![advertised.service_uuid.clone()],
+        advertisement: Some(AdvertisementData {
+            local_name: advertised.local_name.clone(),
+            service_data: Vec::new(),
+            manufacturer_data: Vec::new(),
+            connectable: Some(true),
+        }),
+        observed_at_millis: 0,
+        scan_id,
+    }
+}
+
+fn not_permitted(message: &str) -> BleError {
+    BleError::new(ErrorCode::InvalidArgument, message)
+}
+
+fn too_large(message: &str) -> BleError {
+    BleError::new(ErrorCode::PayloadTooLarge, message)
 }
 
 fn decode(value_base64: &str) -> BleResult<Vec<u8>> {
@@ -838,6 +946,14 @@ mod tests {
                 primary: true,
                 characteristics: vec![
                     characteristic(
+                        "info",
+                        "b1e10f10-6a2c-4a62-8e9e-2c938fa30101",
+                        CharacteristicProperties {
+                            read: true,
+                            ..CharacteristicProperties::default()
+                        },
+                    ),
+                    characteristic(
                         "rx",
                         "b1e10f10-6a2c-4a62-8e9e-2c938fa30102",
                         CharacteristicProperties {
@@ -866,6 +982,7 @@ mod tests {
         joiner_events: Recorded,
         server_id: ServerId,
         connection_id: ConnectionId,
+        info: CharacteristicHandle,
         rx: CharacteristicHandle,
         tx: CharacteristicHandle,
     }
@@ -924,6 +1041,7 @@ mod tests {
                 .clone()
         };
         Linked {
+            info: handle("b1e10f10-6a2c-4a62-8e9e-2c938fa30101"),
             rx: handle("b1e10f10-6a2c-4a62-8e9e-2c938fa30102"),
             tx: handle("b1e10f10-6a2c-4a62-8e9e-2c938fa30103"),
             air,
@@ -994,7 +1112,7 @@ mod tests {
             "joiner",
             Command::Read {
                 connection_id: linked.connection_id.clone(),
-                characteristic: linked.rx.clone(),
+                characteristic: linked.info.clone(),
             },
         );
         assert_eq!(
@@ -1003,6 +1121,123 @@ mod tests {
                 value_base64: "AQ==".into()
             })
         );
+    }
+
+    #[test]
+    fn characteristics_refuse_what_their_properties_forbid() {
+        let linked = linked();
+        let code = |command| run(&linked.joiner, "joiner", command).unwrap_err().code;
+        assert_eq!(
+            code(Command::Read {
+                connection_id: linked.connection_id.clone(),
+                characteristic: linked.rx.clone(),
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code(Command::Write {
+                connection_id: linked.connection_id.clone(),
+                characteristic: linked.info.clone(),
+                value_base64: "AA==".into(),
+                write_type: WriteType::WithResponse,
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code(Command::Subscribe {
+                connection_id: linked.connection_id.clone(),
+                characteristic: linked.rx.clone(),
+            }),
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn values_beyond_the_limits_are_refused() {
+        let linked = linked();
+        subscribe(&linked);
+        let host_code = |command| run(&linked.host, "host", command).unwrap_err().code;
+        assert_eq!(
+            host_code(Command::Notify {
+                server_id: linked.server_id.clone(),
+                peer_id: MockAir::central_id(1),
+                characteristic_key: "peer/tx".into(),
+                value_base64: BASE64.encode([0_u8; 21]),
+            }),
+            ErrorCode::PayloadTooLarge
+        );
+        assert_eq!(
+            host_code(Command::SetValue {
+                server_id: linked.server_id.clone(),
+                characteristic_key: "peer/missing".into(),
+                value_base64: "AA==".into(),
+            }),
+            ErrorCode::InvalidArgument
+        );
+        let write = |bytes: &[u8], write_type| Command::Write {
+            connection_id: linked.connection_id.clone(),
+            characteristic: linked.rx.clone(),
+            value_base64: BASE64.encode(bytes),
+            write_type,
+        };
+        assert_eq!(
+            run(
+                &linked.joiner,
+                "joiner",
+                write(&[0; 21], WriteType::WithoutResponse)
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::PayloadTooLarge
+        );
+        assert_eq!(
+            run(
+                &linked.joiner,
+                "joiner",
+                write(&[0; 513], WriteType::WithResponse)
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::PayloadTooLarge
+        );
+    }
+
+    #[test]
+    fn a_running_scan_finds_a_later_advertisement() {
+        let (joiner_sink, joiner_events) = recorder();
+        let (_air, host, joiner) = MockAir::link(Arc::new(|_, _| {}), joiner_sink);
+        run(
+            &joiner,
+            "joiner",
+            Command::StartScan(ScanOptions {
+                service_uuids: vec![SERVICE.into()],
+                timeout_ms: None,
+            }),
+        )
+        .unwrap();
+        assert!(joiner_events.lock().is_empty());
+        let Reply::ServerCreated { server_id } =
+            run(&host, "host", Command::CreateServer(definition())).unwrap()
+        else {
+            panic!("expected a server");
+        };
+        run(
+            &host,
+            "host",
+            Command::StartAdvertising {
+                server_id,
+                options: AdvertisingOptions {
+                    service_uuid: SERVICE.into(),
+                    local_name: None,
+                    local_name_optional: true,
+                },
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            joiner_events.lock().last(),
+            Some((_, Event::ScanResult { device })) if device.id == MockAir::device_id(0)
+        ));
     }
 
     #[test]

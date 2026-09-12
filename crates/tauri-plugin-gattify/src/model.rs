@@ -411,7 +411,8 @@ pub fn validate_uuid(value: &str) -> BleResult<()> {
 /// # Errors
 ///
 /// Returns [`ErrorCode::InvalidArgument`] for empty definitions, invalid UUIDs,
-/// duplicate instance keys, zero maximum lengths, or invalid initial values.
+/// duplicate instance keys, instance keys with a `/`, zero maximum lengths, or
+/// invalid initial values.
 pub fn validate_server_definition(definition: &ServerDefinition) -> BleResult<()> {
     use std::collections::HashSet;
 
@@ -421,9 +422,21 @@ pub fn validate_server_definition(definition: &ServerDefinition) -> BleResult<()
             "at least one service is required",
         ));
     }
+    // A characteristic key joins the two instance keys with `/`.
+    let check_key = |key: &str| {
+        if key.contains('/') {
+            Err(BleError::new(
+                ErrorCode::InvalidArgument,
+                "instance keys must not contain '/'",
+            ))
+        } else {
+            Ok(())
+        }
+    };
     let mut keys = HashSet::new();
     for service in &definition.services {
         validate_uuid(&service.uuid)?;
+        check_key(&service.instance_key)?;
         if !keys.insert(format!("service:{}", service.instance_key)) {
             return Err(BleError::new(
                 ErrorCode::InvalidArgument,
@@ -432,6 +445,7 @@ pub fn validate_server_definition(definition: &ServerDefinition) -> BleResult<()
         }
         for characteristic in &service.characteristics {
             validate_uuid(&characteristic.uuid)?;
+            check_key(&characteristic.instance_key)?;
             if characteristic.max_value_length == 0 {
                 return Err(BleError::new(
                     ErrorCode::InvalidArgument,
@@ -504,6 +518,26 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    #[test]
+    fn instance_keys_cannot_hold_the_key_separator() {
+        let mut slashed_service = definition(None, 20);
+        slashed_service.services[0].instance_key = "a/b".into();
+        assert_eq!(
+            validate_server_definition(&slashed_service)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        let mut slashed_characteristic = definition(None, 20);
+        slashed_characteristic.services[0].characteristics[0].instance_key = "b/c".into();
+        assert_eq!(
+            validate_server_definition(&slashed_characteristic)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
     }
 
     #[test]

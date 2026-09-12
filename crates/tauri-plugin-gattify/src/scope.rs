@@ -5,9 +5,12 @@ use std::collections::{HashMap, HashSet};
 use parking_lot::Mutex;
 
 use crate::{
-    normalize_uuid, BleError, BleResult, CharacteristicHandle, Command, ConnectionId, ErrorCode,
-    OwnerId, Reply,
+    normalize_uuid, validate_server_definition, BleError, BleResult, CharacteristicHandle, Command,
+    ConnectionId, ErrorCode, OwnerId, Reply,
 };
+
+/// The characteristic handles of one connection, with their service UUIDs.
+type Grants = HashMap<CharacteristicHandle, String>;
 
 /// The service UUIDs an app lists in its `gattify:scope` permission.
 #[derive(Clone, Debug, Default)]
@@ -64,11 +67,12 @@ impl ServiceScope {
 /// Enforces the scope on raw GATT commands from a webview.
 ///
 /// It remembers, for each connection, the characteristic handles that a
-/// scoped discovery returned. Only those handles may be read, written or
-/// subscribed.
+/// scoped discovery returned, with their service UUIDs. Only those handles may
+/// be read, written or subscribed, and only while the scope still holds their
+/// service.
 #[derive(Default)]
 pub struct ScopeGuard {
-    handles: Mutex<HashMap<(OwnerId, ConnectionId), HashSet<CharacteristicHandle>>>,
+    handles: Mutex<HashMap<(OwnerId, ConnectionId), Grants>>,
 }
 
 impl ScopeGuard {
@@ -126,7 +130,8 @@ impl ScopeGuard {
                     .handles
                     .lock()
                     .get(&(owner.clone(), connection_id.clone()))
-                    .is_some_and(|handles| handles.contains(characteristic));
+                    .and_then(|grants| grants.get(characteristic))
+                    .is_some_and(|service_uuid| scope.allows(service_uuid));
                 if allowed {
                     Ok(command)
                 } else {
@@ -144,6 +149,7 @@ impl ScopeGuard {
                         }
                     }
                 }
+                validate_server_definition(&definition)?;
                 Ok(Command::CreateServer(definition))
             }
             Command::StartAdvertising {
@@ -180,8 +186,12 @@ impl ScopeGuard {
                     .collect();
                 let handles = services
                     .iter()
-                    .flat_map(|service| &service.characteristics)
-                    .map(|characteristic| characteristic.handle.clone())
+                    .flat_map(|service| {
+                        let service_uuid = normalize_uuid(&service.uuid).unwrap_or_default();
+                        service.characteristics.iter().map(move |characteristic| {
+                            (characteristic.handle.clone(), service_uuid.clone())
+                        })
+                    })
                     .collect();
                 self.handles
                     .lock()
@@ -437,6 +447,30 @@ mod tests {
                 read("connection-1/characteristic-1")
             )),
             ErrorCode::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn a_handle_leaves_with_its_service_from_the_scope() {
+        let guard = ScopeGuard::default();
+        discover(&guard);
+        let narrowed = ServiceScope::new([OTHER], []);
+        assert_eq!(
+            code(guard.authorize(&narrowed, &owner(), read("connection-1/characteristic-1"))),
+            ErrorCode::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn a_server_definition_is_validated_before_native_code() {
+        let guard = ScopeGuard::default();
+        let Command::CreateServer(mut definition) = server(LAB) else {
+            panic!("expected a server definition");
+        };
+        definition.services[0].characteristics[0].instance_key = "info/x".into();
+        assert_eq!(
+            code(guard.authorize(&scope(), &owner(), Command::CreateServer(definition))),
+            ErrorCode::InvalidArgument
         );
     }
 
