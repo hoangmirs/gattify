@@ -49,8 +49,8 @@ Updated: 12 September 2026
 
 ## Tests actually run
 
-- cargo test --workspace --all-features: 84 tests passed.
-- cargo test --workspace --no-default-features: 80 tests passed.
+- cargo test --workspace --all-features: 85 tests passed.
+- cargo test --workspace --no-default-features: 81 tests passed.
 - cargo clippy --workspace --all-targets --all-features -- -D warnings: clean,
   also for the aarch64-apple-ios target.
 - cargo test --manifest-path examples/gattify-lab/src-tauri/Cargo.toml: 9 IPC
@@ -59,7 +59,7 @@ Updated: 12 September 2026
 - npm test: 17 facade and peer tests, 5 offline-chat tests.
 - XCTest on an iOS 26 simulator: 75 tests passed.
 - The lab APK built for aarch64 Android, and `./gradlew
-  :tauri-plugin-gattify:testDebugUnitTest`: 75 Kotlin tests passed.
+  :tauri-plugin-gattify:testDebugUnitTest`: 88 Kotlin tests passed.
   `lintDebug`: no issues.
 - The lab app built for iOS devices, signed for development, installed and
   launched on an iPhone 16 Pro running iOS 26.6.1. Adapter state, the
