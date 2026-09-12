@@ -32,7 +32,7 @@ The repository has no native radio code. It has no event delivery: the `Event` e
 | Native responsibility | Raw GATT only | The peer protocol exists once, in Rust. The mock tests cover it, and Android and iOS cannot disagree about frames |
 | Platforms | Android and iOS. Desktop builds keep the `Unsupported` backend | The first release targets two phones near each other |
 | Scope | A Tauri global scope lists the service UUIDs that an app allows | A script in the webview can reach only the services that the app lists |
-| Release | Public on crates.io and npm. The owner runs every publish command | Apps depend on published versions |
+| Release | Public on crates.io and npm. The owner publishes the first version by hand. After that, when the repository variable `RELEASE_ON_MERGE` is `true`, each merge into `develop` publishes a new minor version through trusted publishing | Apps depend on published versions. Exact pins make apps wait for a gattify release after each dependency update |
 
 These decisions replace two parts of ADR-001: the three-crate layout and the plan for desktop backends. Sub-project 1 records them in ADR-002.
 
@@ -41,7 +41,7 @@ These decisions replace two parts of ADR-001: the three-crate layout and the pla
 - Desktop backends for macOS, Windows and Linux.
 - Background operation. The contract stays foreground-only.
 - Encryption and authentication, mesh routing, and L2CAP.
-- Publish commands. The owner runs `cargo publish` and `npm publish`.
+- The first publish. The owner runs `cargo publish` and `npm publish` for `0.1.0-alpha.1`, as `docs/release-checklist.md` states.
 
 ## Terms
 
@@ -311,15 +311,16 @@ Sub-projects 3 and 4 can run at the same time, because sub-project 2 fixes the c
 - The README shows the link wrapper from the TypeScript API section.
 - The support matrix shows only verified evidence.
 - CI runs `cargo deny check licenses`.
-- `cargo publish --dry-run` and `npm pack --dry-run` pass.
+- `cargo package` and `npm pack --dry-run` pass in CI.
+- The crate and the npm package have the version `0.1.0-alpha.1`.
 - `CHANGELOG.md` has an entry for version `0.1.0-alpha.1`.
 
 ## Owner steps
 
 1. Make the repository public before the first release. A public repository also makes the macOS CI minutes free.
 2. After sub-projects 3 and 4, run the lab app on the iPhone and on the Android phone. Test each phone as host and as joiner. Record the results in `docs/platforms/test-results/`.
-3. After sub-project 5, publish `0.1.0-alpha.1`.
-4. After the phone test passes, publish `0.1.0`.
+3. After sub-project 5, publish `0.1.0-alpha.1` by hand. Then configure trusted publishing, as `docs/release-checklist.md` states.
+4. After the phone test passes, set the repository variable `RELEASE_ON_MERGE` to `true`. The next merge into `develop` publishes `0.1.0`.
 
 ## Verification
 

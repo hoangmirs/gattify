@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## Unreleased
 
+- Added a release workflow. When the repository variable `RELEASE_ON_MERGE` is `true`, each merge into `develop` publishes a new minor version to crates.io and npm.
 - Renamed the project to gattify and merged the Rust crates into `tauri-plugin-gattify`.
 - Added workspace foundation, portable BLE contracts and deterministic mock.
 - Added bounded peer framing, reassembly, ACK/retry and deduplication logic.
-- Added private TypeScript facade with raw and peer exports.
+- Added TypeScript facade with raw and peer exports.
 - Added Android and iOS native adapter-state reads.
 - Added documentation, policy, examples and honest platform gates.
 - Added the plugin build script and the Tauri native project layout.

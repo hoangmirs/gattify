@@ -1,8 +1,12 @@
 {
   "name": "tauri-plugin-gattify-api",
   "version": "0.1.0",
-  "private": true,
   "description": "Framework-neutral TypeScript facade for tauri-plugin-gattify",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hoangmirs/gattify.git",
+    "directory": "packages/plugin-gattify"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -34,4 +38,3 @@
   },
   "license": "MIT"
 }
-
