@@ -27,7 +27,7 @@ pub use commands::init;
 pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
 pub use manager::Manager;
 #[cfg(feature = "mock")]
-pub use mock::MockBackend;
+pub use mock::{MockAir, MockBackend};
 pub use model::*;
 pub use scope::{ScopeGuard, ServiceScope};
 use system::SystemBackend;
