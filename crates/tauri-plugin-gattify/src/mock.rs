@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -84,6 +85,8 @@ impl Side {
 struct Air {
     next_resource: u64,
     value_limit: u32,
+    /// How long each write and notification takes on the air.
+    frame_delay: Duration,
     sides: Vec<Side>,
     /// Events raised while the air is locked, emitted after it is released.
     outbox: Vec<(usize, OwnerId, Event)>,
@@ -94,6 +97,7 @@ impl Air {
         Self {
             next_resource: 0,
             value_limit: DEFAULT_VALUE_LIMIT,
+            frame_delay: Duration::ZERO,
             sides: sinks.into_iter().map(Side::new).collect(),
             outbox: Vec::new(),
         }
@@ -829,6 +833,12 @@ impl Default for MockBackend {
 #[async_trait]
 impl Backend for MockBackend {
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply> {
+        if matches!(command, Command::Write { .. } | Command::Notify { .. }) {
+            let delay = self.air.lock().frame_delay;
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+        }
         let reply = self.air.lock().execute(self.side, context, command);
         flush(&self.air);
         reply
@@ -892,6 +902,11 @@ impl MockAir {
     /// as when a write response is lost.
     pub fn fail_next_reply(&self, side: usize) {
         self.air.lock().sides[side].failed_replies += 1;
+    }
+
+    /// Makes every write and notification take `delay`, as a slow link does.
+    pub fn set_frame_delay(&self, delay: Duration) {
+        self.air.lock().frame_delay = delay;
     }
 
     /// Sets the value length that connections and subscriptions report.

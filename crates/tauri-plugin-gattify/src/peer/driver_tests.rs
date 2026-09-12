@@ -610,3 +610,30 @@ async fn a_hello_ack_proves_a_hello_whose_response_was_lost() {
     send(&joiner, &joiner_peer, b"after").await.unwrap();
     assert_eq!(host.next_event().await, message(&host_peer, b"after"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_ack_overtakes_a_long_message_on_a_slow_link() {
+    let connected = connected().await;
+    // At 20-byte frames and 30 ms a frame, 4 KiB takes about 20 s to write.
+    connected.air.set_frame_delay(Duration::from_millis(30));
+    let joiner = connected.joiner.driver.clone();
+    let peer = connected.joiner_peer.clone();
+    let long = tokio::spawn(async move {
+        joiner
+            .send(LABEL, &peer, vec![1; 4096], Duration::from_secs(60))
+            .await
+    });
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let started = Instant::now();
+
+    let receipt = send(&connected.host, &connected.host_peer, b"ping")
+        .await
+        .unwrap();
+
+    assert_eq!(receipt.delivery, DeliveryOutcome::TransportAcknowledged);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(
+        long.await.unwrap().unwrap().delivery,
+        DeliveryOutcome::TransportAcknowledged
+    );
+}

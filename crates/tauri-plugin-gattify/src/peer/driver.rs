@@ -10,9 +10,9 @@
 //! the label names the webview that asked for the peer.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -189,17 +189,91 @@ impl Link {
     }
 }
 
-enum Outbound {
-    Frame {
-        bytes: Vec<u8>,
-        written: Option<oneshot::Sender<BleResult<()>>>,
-    },
-    /// Ends the writer of a closed peer.
-    Finish {
-        send_close: bool,
-        disconnect: bool,
-        done: Option<oneshot::Sender<()>>,
-    },
+struct OutboundFrame {
+    bytes: Vec<u8>,
+    written: Option<oneshot::Sender<BleResult<()>>>,
+}
+
+/// Ends the writer of a closed peer.
+struct Finish {
+    send_close: bool,
+    disconnect: bool,
+    done: Option<oneshot::Sender<()>>,
+}
+
+#[derive(Default)]
+struct Lanes {
+    control: VecDeque<OutboundFrame>,
+    data: VecDeque<OutboundFrame>,
+    finish: Option<Finish>,
+}
+
+/// The frames one peer still has to write.
+///
+/// HELLO, `HELLO_ACK` and ACK frames leave before DATA frames. On a slow link a
+/// long message takes many seconds to write, and an ACK queued behind it would
+/// miss the ACK deadline of the other side.
+#[derive(Default)]
+struct Outbox {
+    lanes: Mutex<Lanes>,
+    ready: Notify,
+}
+
+enum Outgoing {
+    Frame(OutboundFrame),
+    Finish(Finish),
+}
+
+impl Outbox {
+    fn control(&self, bytes: Vec<u8>, written: Option<oneshot::Sender<BleResult<()>>>) {
+        self.lanes
+            .lock()
+            .control
+            .push_back(OutboundFrame { bytes, written });
+        self.ready.notify_one();
+    }
+
+    fn data(&self, bytes: Vec<u8>, written: Option<oneshot::Sender<BleResult<()>>>) {
+        self.lanes
+            .lock()
+            .data
+            .push_back(OutboundFrame { bytes, written });
+        self.ready.notify_one();
+    }
+
+    /// Drops the DATA frames not written yet, and ends the writer after the
+    /// control frames.
+    fn finish(&self, finish: Finish) {
+        let dropped = {
+            let mut lanes = self.lanes.lock();
+            lanes.finish = Some(finish);
+            std::mem::take(&mut lanes.data)
+        };
+        for frame in dropped {
+            if let Some(written) = frame.written {
+                let _ = written.send(Err(link_closed()));
+            }
+        }
+        self.ready.notify_one();
+    }
+
+    async fn next(&self) -> Outgoing {
+        loop {
+            {
+                let mut lanes = self.lanes.lock();
+                if let Some(frame) = lanes.control.pop_front() {
+                    return Outgoing::Frame(frame);
+                }
+                if let Some(frame) = lanes.data.pop_front() {
+                    return Outgoing::Frame(frame);
+                }
+                if let Some(finish) = lanes.finish.take() {
+                    return Outgoing::Finish(finish);
+                }
+            }
+            self.ready.notified().await;
+        }
+    }
 }
 
 struct Endpoint {
@@ -224,8 +298,7 @@ struct Peer {
     sender: Sender,
     receiver: Receiver,
     waiters: HashMap<u32, oneshot::Sender<BleResult<SendReceipt>>>,
-    outbound: mpsc::UnboundedSender<Outbound>,
-    closing: Arc<AtomicBool>,
+    outbox: Arc<Outbox>,
     wake: Arc<Notify>,
 }
 
@@ -538,10 +611,8 @@ impl PeerDriver {
                     hello_ack: Some(hello_ack),
                 },
             );
-            let _ = peer.outbound.send(Outbound::Frame {
-                bytes: control_frame(FrameKind::Hello),
-                written: Some(written_tx),
-            });
+            peer.outbox
+                .control(control_frame(FrameKind::Hello), Some(written_tx));
         }
         // A HELLO_ACK proves that the host received HELLO even when the write
         // response was lost, so a failed write still waits for it.
@@ -885,10 +956,8 @@ impl PeerDriver {
                 hello_ack: None,
             },
         );
-        let _ = peer.outbound.send(Outbound::Frame {
-            bytes: control_frame(FrameKind::HelloAck),
-            written: None,
-        });
+        peer.outbox
+            .control(control_frame(FrameKind::HelloAck), None);
         if let Some(endpoint) = state.endpoints.get_mut(&endpoint_id) {
             endpoint.centrals.insert(central, peer_id.clone());
         }
@@ -956,8 +1025,7 @@ impl PeerDriver {
     }
 
     fn insert_peer<'a>(&self, state: &'a mut State, new: NewPeer<'_>) -> &'a mut Peer {
-        let (outbound, outbound_rx) = mpsc::unbounded_channel();
-        let closing = Arc::new(AtomicBool::new(false));
+        let outbox = Arc::new(Outbox::default());
         let wake = Arc::new(Notify::new());
         let peer_id = new.peer_id;
         state.peers.insert(
@@ -979,8 +1047,7 @@ impl PeerDriver {
                     ..ReceiverLimits::default()
                 }),
                 waiters: HashMap::new(),
-                outbound,
-                closing: closing.clone(),
+                outbox: outbox.clone(),
                 wake: wake.clone(),
             },
         );
@@ -989,8 +1056,7 @@ impl PeerDriver {
             self.shared.runtime.clone(),
             peer_owner(new.label),
             new.link,
-            outbound_rx,
-            closing,
+            outbox,
         ));
         tokio::spawn(pump(self.shared.clone(), peer_id.clone(), wake));
         state
@@ -1084,10 +1150,7 @@ fn on_peer_frame(
             Ok(ReceiveAction::Message { payload, ack, .. }) => {
                 // The message goes to the webview at once; the queue only bounds admission.
                 let _ = peer.receiver.pop_message();
-                let _ = peer.outbound.send(Outbound::Frame {
-                    bytes: ack,
-                    written: None,
-                });
+                peer.outbox.control(ack, None);
                 effects.events.push((
                     peer.label.clone(),
                     PeerEvent::Message {
@@ -1097,10 +1160,7 @@ fn on_peer_frame(
                 ));
             }
             Ok(ReceiveAction::DuplicateAck { ack, .. }) => {
-                let _ = peer.outbound.send(Outbound::Frame {
-                    bytes: ack,
-                    written: None,
-                });
+                peer.outbox.control(ack, None);
             }
             // A partial message waits for its other fragments. A rejected
             // frame gets no ACK, so the sender retransmits it.
@@ -1176,8 +1236,7 @@ fn remove_peer(state: &mut State, peer_id: &PeerId, close: Closing, effects: &mu
             }
         }
     }
-    peer.closing.store(true, Ordering::Release);
-    let _ = peer.outbound.send(Outbound::Finish {
+    peer.outbox.finish(Finish {
         send_close: close.send_close,
         disconnect: close.disconnect,
         done: close.done,
@@ -1211,34 +1270,24 @@ fn remove_peer(state: &mut State, peer_id: &PeerId, close: Closing, effects: &mu
     }
 }
 
-/// Writes the frames of one peer in order.
-async fn write_frames(
-    runtime: BleRuntime,
-    owner: OwnerId,
-    link: Link,
-    mut outbound: mpsc::UnboundedReceiver<Outbound>,
-    closing: Arc<AtomicBool>,
-) {
-    while let Some(item) = outbound.recv().await {
-        match item {
-            Outbound::Frame { bytes, written } => {
-                let result = if closing.load(Ordering::Acquire) {
-                    Err(link_closed())
-                } else {
-                    runtime
-                        .execute(owner.clone(), link.frame_command(&bytes), None)
-                        .await
-                        .map(|_| ())
-                };
+/// Writes the frames of one peer, control frames first.
+async fn write_frames(runtime: BleRuntime, owner: OwnerId, link: Link, outbox: Arc<Outbox>) {
+    loop {
+        match outbox.next().await {
+            Outgoing::Frame(OutboundFrame { bytes, written }) => {
+                let result = runtime
+                    .execute(owner.clone(), link.frame_command(&bytes), None)
+                    .await
+                    .map(|_| ());
                 if let Some(written) = written {
                     let _ = written.send(result);
                 }
             }
-            Outbound::Finish {
+            Outgoing::Finish(Finish {
                 send_close,
                 disconnect,
                 done,
-            } => {
+            }) => {
                 if send_close {
                     let close = link.frame_command(&control_frame(FrameKind::Close));
                     let _ = tokio::time::timeout(
@@ -1295,7 +1344,7 @@ async fn pump(shared: Arc<Shared>, peer_id: PeerId, wake: Arc<Notify>) {
                             } else {
                                 None
                             };
-                            let _ = peer.outbound.send(Outbound::Frame { bytes, written });
+                            peer.outbox.data(bytes, written);
                         }
                         Step::Written(message_id, written)
                     }
