@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 10 September 2026
+Updated: 12 September 2026
 
 ## Delivered
 
@@ -36,6 +36,9 @@ Updated: 10 September 2026
   return Unsupported. The native code stores an event channel for later use.
 - Lab app skeleton in examples/gattify-lab that shows adapter state and
   capabilities.
+- Release workflow: a merge into `develop` increases the minor version, tags
+  the commit, and publishes the crate and the npm package through trusted
+  publishing. The repository variable `RELEASE_ON_MERGE` enables it.
 
 ## Tests actually run
 
@@ -59,6 +62,13 @@ Updated: 10 September 2026
 - CI fuzzed `frame_decode` for 60 seconds: 33,324,611 runs, no crash.
 - The ios CI job compiles the crate with `unsafe_code = "forbid"`, so the
   iOS plugin binding needs no lint exception.
+- cargo package -p tauri-plugin-gattify: passed, the packaged crate builds
+  on aarch64-apple-darwin.
+- actionlint 1.7.12 on ci.yml and release.yml: no findings.
+- The release version steps on a scratch copy: 0.1.0 became 0.2.0, and
+  0.1.0-alpha.1 became 0.1.0. All three Cargo lockfiles passed
+  `cargo metadata --locked`, and `npm ci` passed.
+- The publish jobs have not run. They need a real release.
 
 ## Not verified in this environment
 
@@ -78,8 +88,8 @@ Updated: 10 September 2026
 - M3: concrete macOS, Windows, and Linux backends.
 - M4 integration: peer state machine is not connected to native GATT callbacks.
 - M5: packaged Tauri example apps and physical multi-peer qualification.
-- M6: fresh-consumer crate/package install, SBOM/license scan, publishable npm
-  owner/name, and release artifacts.
+- M6: fresh-consumer crate/package install and SBOM/license scan. Release
+  runs do not do either yet.
 
 The production backend intentionally reports unknown capabilities and returns
 Unsupported for radio operations. It never substitutes the mock backend.

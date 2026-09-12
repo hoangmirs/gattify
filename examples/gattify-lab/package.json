@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
-    "tauri-plugin-gattify-api": "0.1.0"
+    "tauri-plugin-gattify-api": "file:../../packages/plugin-gattify"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

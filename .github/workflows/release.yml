@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to increase
+        type: choice
+        options: [minor, patch, major]
+        default: minor
+
+permissions: {}
+
+jobs:
+  ci:
+    if: github.ref == 'refs/heads/develop' && (github.event_name == 'workflow_dispatch' || vars.RELEASE_ON_MERGE == 'true')
+    uses: ./.github/workflows/ci.yml
+    with:
+      release: true
+    permissions:
+      contents: read
+
+  bump:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.89.0
+      - run: |
+          pm=$(jq -er .packageManager package.json)
+          npm install -g --ignore-scripts "$pm"
+      - name: Increase the version
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump || 'minor' }}
+        run: |
+          npm version "$BUMP" --workspace packages/plugin-gattify --no-git-tag-version --no-workspaces-update --ignore-scripts
+          version=$(jq -r .version packages/plugin-gattify/package.json)
+          npm install --package-lock-only --ignore-scripts
+          perl -pi -e "s/^version = \".*\"\$/version = \"$version\"/" Cargo.toml
+          grep -qx "version = \"$version\"" Cargo.toml
+          cargo update --workspace
+          cargo update -p tauri-plugin-gattify --manifest-path examples/gattify-lab/src-tauri/Cargo.toml
+          cargo update -p tauri-plugin-gattify --manifest-path fuzz/Cargo.toml
+          grep -qx '## Unreleased' CHANGELOG.md
+          perl -pi -e "s/^## Unreleased\$/## Unreleased\n\n## $version - $(date -u +%F)/" CHANGELOG.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Commit, tag and push the release
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -am "Release $VERSION"
+          git tag "v$VERSION"
+          # A GITHUB_TOKEN push starts no workflow. A personal token here would make every release commit start another release.
+          git push --atomic origin HEAD:develop "v$VERSION"
+
+  publish-crate:
+    # After npm, so that a failed npm publish also stops the crate publish.
+    needs: [bump, publish-npm]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.bump.outputs.version }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.89.0
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      # The ci job already ran cargo package. A verify build here would run build scripts while the publish token exists.
+      - run: cargo publish --locked --no-verify -p tauri-plugin-gattify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  publish-npm:
+    needs: bump
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.bump.outputs.version }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: |
+          pm=$(jq -er .packageManager package.json)
+          npm install -g --ignore-scripts "$pm"
+      - run: npm ci --ignore-scripts
+      - run: npm run build --workspace packages/plugin-gattify
+      - run: npm publish --workspace packages/plugin-gattify --ignore-scripts
+
+  github-release:
+    needs: [bump, publish-crate, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.bump.outputs.version }}
