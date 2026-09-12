@@ -7,7 +7,7 @@ The Release workflow, `.github/workflows/release.yml`, publishes the crate `taur
 - A merge into `develop` starts a release run when the repository variable `RELEASE_ON_MERGE` is `true`. This run increases the minor version.
 - To increase the patch or major version, open **Actions > Release > Run workflow**. Select the `develop` branch and the version part. The button ignores `RELEASE_ON_MERGE`.
 
-For each change that users can see, add a line under `## Unreleased` in `CHANGELOG.md` in the same pull request. Do not change a version by hand. The only exception is the first version, in step 4 of the one-time setup.
+For each change that users can see, add a line under `## Unreleased` in `CHANGELOG.md` in the same pull request. Do not change a version by hand, except for a prerelease version. The Release workflow cannot make a prerelease version.
 
 ## What a release run does
 
@@ -20,7 +20,9 @@ For each change that users can see, add a line under `## Unreleased` in `CHANGEL
 
 A release run does not generate an SBOM and does not review licenses. `docs/provenance.md` requires both for a release. Sub-project 5 adds `cargo deny check licenses` to CI.
 
-## Before the first publish
+## Before `0.1.0-alpha.1`
+
+`0.1.0-alpha.0` claims the package names. It skips these checks, by the owner's decision on 12 September 2026. Complete them before `0.1.0-alpha.1`.
 
 - Run `cargo deny check licenses`. Review the licenses of the npm dependencies. Update `THIRD_PARTY_NOTICES.md`.
 - Generate an SPDX or CycloneDX SBOM from `Cargo.lock` and `package-lock.json`, as `docs/provenance.md` requires.
@@ -28,30 +30,31 @@ A release run does not generate an SBOM and does not review licenses. `docs/prov
 - Install the packed crate and the packed npm package into a new Tauri app.
 - Check that `docs/support-matrix.md` and `CHANGELOG.md` contain no unverified claims.
 
-## One-time setup
+## Setup and first releases
 
-Do these steps in this order. Do not select **Run workflow** before step 7 is complete. An earlier release run pushes a release commit and a tag, and then fails to publish.
+Do these steps in this order. Do not select **Run workflow** before the phone test passes, because a minor release from a prerelease version publishes `0.1.0`.
 
 1. Make the repository public. On the free GitHub plan, environments work only in a public repository. npm adds provenance only for an npm package from a public repository.
 2. In **Settings > Environments**, create the environment `release`. Under **Deployment branches and tags**, allow only `develop`.
-3. Complete the checks in [Before the first publish](#before-the-first-publish).
-4. Check that `develop` has the version `0.1.0-alpha.1`. Sub-project 5 sets this version by hand, and this is the only manual version change. `CHANGELOG.md` must keep the `## Unreleased` line above the `## 0.1.0-alpha.1` heading, because a release run needs that line.
-5. Publish `0.1.0-alpha.1` by hand, because neither registry accepts trusted publishing before the first version exists. Run these commands from an up-to-date `develop`:
+3. Publish `0.1.0-alpha.0` by hand, because neither registry accepts trusted publishing before the first version exists. Run these commands from an up-to-date `develop`:
 
    ```bash
+   cargo login
    cargo publish -p tauri-plugin-gattify
+   npm login
    npm ci
    npm run build --workspace packages/plugin-gattify
    npm publish --workspace packages/plugin-gattify --tag next
-   gh release create v0.1.0-alpha.1 --target develop --prerelease --generate-notes
+   gh release create v0.1.0-alpha.0 --target develop --prerelease --generate-notes
    ```
 
-   `cargo publish` needs a crates.io API token from `cargo login`. `npm publish` needs `npm login`. npm refuses a prerelease version without `--tag`.
-6. On crates.io, add a GitHub trusted publisher to the crate: owner `hoangmirs`, repository `gattify`, workflow `release.yml`, environment `release`.
-7. On npmjs.com, add a GitHub Actions trusted publisher to the npm package with the same values. Under **Allowed actions**, allow `npm publish`. A new configuration allows only `npm stage publish`.
-8. On npmjs.com, open **Settings > Publishing access** for the npm package. Select **Require two-factor authentication and disallow tokens**. Trusted publishing continues to work, because it uses a short-lived OIDC token, not a stored token.
-9. On crates.io, revoke the API token from step 5.
-10. Set the repository variable `RELEASE_ON_MERGE` to `true` in **Settings > Secrets and variables > Actions > Variables**. The design spec puts this step after the phone test. The next merge into `develop` then publishes `0.1.0`.
+   `cargo login` asks for a crates.io API token with the `publish-new` scope. npm refuses a prerelease version without `--tag`.
+4. On crates.io, add a GitHub trusted publisher to the crate: owner `hoangmirs`, repository `gattify`, workflow `release.yml`, environment `release`.
+5. On npmjs.com, add a GitHub Actions trusted publisher to the npm package with the same values. Under **Allowed actions**, allow `npm publish`. A new configuration allows only `npm stage publish`.
+6. On npmjs.com, open **Settings > Publishing access** for the npm package. Select **Require two-factor authentication and disallow tokens**. Trusted publishing continues to work, because it uses a short-lived OIDC token, not a stored token.
+7. On crates.io, revoke the API token from step 3.
+8. After sub-project 5, complete the checks in [Before `0.1.0-alpha.1`](#before-010-alpha1). Sub-project 5 sets the version `0.1.0-alpha.1`. Publish it by hand, as in step 3, with a new crates.io token. `CHANGELOG.md` must keep the `## Unreleased` line above the new version heading, because a release run needs that line.
+9. After the phone test passes, set the repository variable `RELEASE_ON_MERGE` to `true` in **Settings > Secrets and variables > Actions > Variables**. The next merge into `develop` then publishes `0.1.0`.
 
 ## If a release run fails
 

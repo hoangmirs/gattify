@@ -1,6 +1,6 @@
 {
   "name": "tauri-plugin-gattify-api",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "Framework-neutral TypeScript facade for tauri-plugin-gattify",
   "repository": {
     "type": "git",
