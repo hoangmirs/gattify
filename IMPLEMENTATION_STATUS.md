@@ -62,12 +62,18 @@ Updated: 12 September 2026
   :tauri-plugin-gattify:testDebugUnitTest`: 75 Kotlin tests passed.
   `lintDebug`: no issues.
 - The lab app built for iOS devices, signed for development, installed and
-  launched on an iPhone 16 Pro running iOS 26.6.1.
+  launched on an iPhone 16 Pro running iOS 26.6.1. Adapter state, the
+  Bluetooth prompt, all three permissions and scanning worked.
+- Hardware: the iPhone 16 Pro hosted and the macOS probe joined. The handshake
+  and complete messages in both directions passed, including 4 KiB from the
+  host. The run found ACK starvation and 20-byte frames; both are fixed and
+  the ACK fix has a MockAir test. See
+  `docs/platforms/test-results/2026-09-12-iphone-host-mac-joiner.md`.
 
 ## Not verified yet
 
-- Any radio exchange between two devices. The records go to
-  `docs/platforms/test-results/`.
+- The two fixes above on hardware.
+- The iPhone as a joiner, and two iPhones with each other.
 - Any Android device.
 
 ## Incomplete milestones
