@@ -537,7 +537,7 @@ Every event goes to the owner of its resource.
 | `serverWrite` | `{ "serverId", "peerId", "characteristicKey", "valueBase64" }` | A central writes a characteristic |
 | `subscriptionChanged` | `{ "serverId", "peerId", "characteristicKey", "subscribed", "maxValueLength" }` | A central subscribes or unsubscribes |
 | `adapterStateChanged` | `{ "state" }` | The adapter state changes. Send it to every owner that holds a resource |
-| `criticalStateLoss` | `{ "resourceId", "reason" }` | A server loses its registration, for example when Bluetooth turns off. `resourceId` is the server ID |
+| `criticalStateLoss` | `{ "resourceId", "reason" }` | A server loses its registration. `resourceId` is the server ID. `reason` is `bluetoothOff`, or on Android `notificationTimeout` or `serviceAddTimeout` when the platform server stopped answering and was closed |
 
 ### Server writes
 
