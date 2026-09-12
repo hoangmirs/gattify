@@ -10,6 +10,9 @@ internal object Att {
   const val REQUEST_NOT_SUPPORTED = 0x06
   const val INVALID_OFFSET = 0x07
   const val INVALID_ATTRIBUTE_LENGTH = 0x0D
+
+  /** The common profile error for a CCCD value that the characteristic cannot take. */
+  const val CCCD_IMPROPERLY_CONFIGURED = 0xFD
 }
 
 internal const val DEFAULT_ATT_MTU = 23
@@ -79,11 +82,25 @@ internal data class Properties(
 internal const val CCCD_NOTIFY = 0x01
 internal const val CCCD_INDICATE = 0x02
 
-/** The configuration bits of a CCCD write, or null when the value is not two bytes long. */
-internal fun cccdBits(value: ByteArray): Int? =
-  if (value.size == 2) value[0].toInt() and (CCCD_NOTIFY or CCCD_INDICATE) else null
+/** The unsigned 16-bit little-endian value of a CCCD write, or null when it is not two bytes long. */
+internal fun cccdValueOf(value: ByteArray): Int? =
+  if (value.size == 2) (value[0].toInt() and 0xFF) or ((value[1].toInt() and 0xFF) shl 8) else null
 
-internal fun cccdValue(bits: Int): ByteArray = byteArrayOf(bits.toByte(), 0)
+/**
+ * Checks a CCCD write: two bytes, no reserved bit, and only modes that the
+ * characteristic has. A failed write keeps the previous configuration.
+ */
+internal fun cccdWriteStatus(properties: Properties, value: ByteArray): Int {
+  val bits = cccdValueOf(value) ?: return Att.INVALID_ATTRIBUTE_LENGTH
+  return when {
+    bits and (CCCD_NOTIFY or CCCD_INDICATE).inv() != 0 -> Att.CCCD_IMPROPERLY_CONFIGURED
+    bits and CCCD_NOTIFY != 0 && !properties.notify -> Att.CCCD_IMPROPERLY_CONFIGURED
+    bits and CCCD_INDICATE != 0 && !properties.indicate -> Att.CCCD_IMPROPERLY_CONFIGURED
+    else -> Att.SUCCESS
+  }
+}
+
+internal fun cccdValue(bits: Int): ByteArray = byteArrayOf(bits.toByte(), (bits shr 8).toByte())
 
 /** A notify is an indication when the central enabled indications and not notifications. */
 internal fun confirms(bits: Int): Boolean = bits and CCCD_NOTIFY == 0 && bits and CCCD_INDICATE != 0

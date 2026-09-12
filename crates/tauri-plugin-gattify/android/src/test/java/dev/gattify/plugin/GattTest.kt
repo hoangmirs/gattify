@@ -37,17 +37,49 @@ class GattTest {
     assertFalse(Properties.fromBits(0x02).writable)
   }
 
+  private val notifyOnly = Properties(read = false, write = false, writeWithoutResponse = false, notify = true, indicate = false)
+  private val indicateOnly = Properties(read = false, write = false, writeWithoutResponse = false, notify = false, indicate = true)
+  private val both = Properties(read = false, write = false, writeWithoutResponse = false, notify = true, indicate = true)
+
   @Test
-  fun `a CCCD write is two bytes, and only indications alone confirm`() {
-    assertEquals(CCCD_NOTIFY, cccdBits(byteArrayOf(1, 0)))
-    assertEquals(CCCD_INDICATE, cccdBits(byteArrayOf(2, 0)))
-    assertEquals(0, cccdBits(byteArrayOf(0, 0)))
-    assertNull(cccdBits(byteArrayOf(1)))
-    assertNull(cccdBits(byteArrayOf(1, 0, 0)))
+  fun `a CCCD value is the full unsigned 16-bit little-endian value`() {
+    assertEquals(CCCD_NOTIFY, cccdValueOf(byteArrayOf(1, 0)))
+    assertEquals(CCCD_INDICATE, cccdValueOf(byteArrayOf(2, 0)))
+    assertEquals(0, cccdValueOf(byteArrayOf(0, 0)))
+    assertEquals(0x0101, cccdValueOf(byteArrayOf(1, 1)))
+    assertEquals(0xFFFF, cccdValueOf(byteArrayOf(0xFF.toByte(), 0xFF.toByte())))
+    assertNull(cccdValueOf(byteArrayOf(1)))
+    assertNull(cccdValueOf(byteArrayOf(1, 0, 0)))
+    assertArrayEquals(byteArrayOf(2, 0), cccdValue(CCCD_INDICATE))
+  }
+
+  @Test
+  fun `a CCCD write may enable only the modes the characteristic has`() {
+    assertEquals(Att.SUCCESS, cccdWriteStatus(notifyOnly, byteArrayOf(1, 0)))
+    assertEquals(Att.SUCCESS, cccdWriteStatus(notifyOnly, byteArrayOf(0, 0)))
+    assertEquals(Att.SUCCESS, cccdWriteStatus(indicateOnly, byteArrayOf(2, 0)))
+    assertEquals(Att.SUCCESS, cccdWriteStatus(both, byteArrayOf(3, 0)))
+    // Indications on a notify-only characteristic must not switch the host to indications.
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(notifyOnly, byteArrayOf(2, 0)))
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(notifyOnly, byteArrayOf(3, 0)))
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(indicateOnly, byteArrayOf(1, 0)))
+  }
+
+  @Test
+  fun `a CCCD write with a reserved bit or a bad length fails`() {
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(both, byteArrayOf(4, 0)))
+    // A reserved bit in the high byte, which a low-byte mask used to hide.
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(notifyOnly, byteArrayOf(1, 1)))
+    assertEquals(Att.CCCD_IMPROPERLY_CONFIGURED, cccdWriteStatus(both, byteArrayOf(0, 0x80.toByte())))
+    assertEquals(Att.INVALID_ATTRIBUTE_LENGTH, cccdWriteStatus(both, byteArrayOf(1)))
+    assertEquals(Att.INVALID_ATTRIBUTE_LENGTH, cccdWriteStatus(both, byteArrayOf(1, 0, 0)))
+  }
+
+  @Test
+  fun `only indications alone confirm`() {
     assertFalse(confirms(CCCD_NOTIFY))
     assertTrue(confirms(CCCD_INDICATE))
     assertFalse(confirms(CCCD_NOTIFY or CCCD_INDICATE))
-    assertArrayEquals(byteArrayOf(2, 0), cccdValue(CCCD_INDICATE))
   }
 
   @Test

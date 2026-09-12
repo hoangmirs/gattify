@@ -46,7 +46,7 @@ internal class Peripheral(private val backend: GattifyBackend) {
   private val servers = LinkedHashMap<String, LocalServer>()
   private val byAttribute = IdentityHashMap<BluetoothGattCharacteristic, LocalCharacteristic>()
   private val byCccd = IdentityHashMap<BluetoothGattDescriptor, LocalCharacteristic>()
-  private val centralIds = RemoteRegistry("central", backend.ids)
+  private val centralIds = ProcessIds.centrals
   private val centrals = HashMap<String, RemoteCentral>()
   private val registrations = ArrayDeque<Registration>()
   private var adding: BluetoothGattService? = null
@@ -68,12 +68,13 @@ internal class Peripheral(private val backend: GattifyBackend) {
     var aborted = false
   }
 
+  /** A `notify`. [deadlineAt] is on the scheduler clock. */
   private class Notification(
     val central: RemoteCentral,
     val characteristic: LocalCharacteristic,
     val value: ByteArray,
-    val confirm: Boolean,
     val procedure: Procedure,
+    val deadlineAt: Long,
   )
 
   /** The platform calls back on binder threads, so each callback moves to the handler. */
@@ -195,17 +196,16 @@ internal class Peripheral(private val backend: GattifyBackend) {
     val peerId = payload.requireString("peerId")
     val value = decodeBase64(payload.requireString("valueBase64"), "valueBase64")
     val central = centrals.values.firstOrNull { it.id == peerId } ?: throw invalidHandle(peerId)
-    val bits = central.subscriptions[characteristic]
-      ?: throw BleException(ErrorCode.INVALID_HANDLE, "$peerId has no subscription to ${characteristic.spec.key}")
+    if (!central.subscriptions.containsKey(characteristic)) {
+      throw BleException(ErrorCode.INVALID_HANDLE, "$peerId has no subscription to ${characteristic.spec.key}")
+    }
     val limit = valueLength(central.mtu)
     if (value.size > limit) throw payloadTooLarge("a notification to $peerId carries at most $limit bytes")
 
-    val notification = Notification(central, characteristic, value, confirms(bits), procedure)
-    procedure.onAbort {
-      // A notification in flight keeps its place until the stack answers, or a short grace passes.
-      if (notifications.inFlight === notification) watchNotification(notification)
-    }
-    procedure.armDeadline(deadlineFor("notify", request.deadlineMillis))
+    // A cancelled notification in flight keeps its place until the stack answers: see nextNotification.
+    val deadline = deadlineFor("notify", request.deadlineMillis) ?: Deadlines.PROCEDURE_MS
+    val notification = Notification(central, characteristic, value, procedure, backend.scheduler.now() + deadline)
+    procedure.armDeadline(deadline)
     notifications.enqueue(notification)
     nextNotification()
   }
@@ -217,24 +217,62 @@ internal class Peripheral(private val backend: GattifyBackend) {
     }
   }
 
-  /** Bluetooth turned off: the platform server and its services are gone. */
-  fun adapterOff() {
-    for (registration in registrations.toList()) {
-      registration.procedure.reject(BleException(ErrorCode.BLUETOOTH_OFF, "Bluetooth turned off"))
-    }
+  /** The backend is going away: every server closes without events, and so does the platform server. */
+  fun releaseAll() {
+    val error = cancelled("the activity was destroyed")
+    for (server in servers.values.toList()) release(server, error)
+    for (registration in registrations.toList()) registration.procedure.reject(error)
     registrations.clear()
     adding = null
     addWatchdog?.cancel()
-    for (notification in notifications.drain()) notification.procedure.reject(disconnected("Bluetooth turned off"))
     notificationWatchdog?.cancel()
+    for (notification in notifications.drain()) notification.procedure.reject(error)
+    centrals.clear()
+    closePlatformServer()
+  }
+
+  /** Bluetooth turned off: the platform server and its services are gone. */
+  fun adapterOff() = loseGeneration(
+    reason = "bluetoothOff",
+    registrationError = BleException(ErrorCode.BLUETOOTH_OFF, "Bluetooth turned off"),
+    notificationError = disconnected("Bluetooth turned off"),
+  )
+
+  /**
+   * The platform server left a request unanswered. Its callbacks carry no request
+   * ID, so a late one would answer the next request: this server generation ends.
+   */
+  private fun stalled(reason: String) {
+    Log.w(TAG, "the GATT server stopped answering: $reason")
+    loseGeneration(
+      reason = reason,
+      registrationError = internalError("the GATT server stopped answering"),
+      notificationError = disconnected("the GATT server stopped answering"),
+    )
+  }
+
+  /**
+   * Ends the platform server generation. Pending registrations and notifications
+   * reject, every subscriber ends with `subscribed: false`, and every server reports
+   * `criticalStateLoss` and stays lost. The next createServer opens a new generation.
+   */
+  private fun loseGeneration(reason: String, registrationError: BleException, notificationError: BleException) {
+    val pending = registrations.toList()
+    registrations.clear()
+    adding = null
+    addWatchdog?.cancel()
+    for (registration in pending) registration.procedure.reject(registrationError)
+    notificationWatchdog?.cancel()
+    for (notification in notifications.drain()) notification.procedure.reject(notificationError)
     for (central in centrals.values) endSubscriptions(central)
     centrals.clear()
-    for (server in servers.values) {
+    for (server in servers.values.toList()) {
       if (server.lost) continue
       server.lost = true
+      backend.advertiser.stopFor(server)
       forgetAttributes(server)
       server.services.clear()
-      backend.emit(server.owner, Events.criticalStateLoss(server.id, "bluetoothOff"))
+      backend.emit(server.owner, Events.criticalStateLoss(server.id, reason))
     }
     closePlatformServer()
   }
@@ -296,8 +334,10 @@ internal class Peripheral(private val backend: GattifyBackend) {
         continue
       }
       adding = service
+      // The platform keeps one pending service and gives a late callback the handles of the
+      // next one, so an unanswered add ends the generation instead of adding again.
       addWatchdog = backend.scheduler.schedule(Deadlines.PROCEDURE_MS) {
-        if (adding === service) serviceAdded(BluetoothGatt.GATT_FAILURE, service)
+        if (adding === service) stalled("serviceAddTimeout")
       }
     }
   }
@@ -377,10 +417,8 @@ internal class Peripheral(private val backend: GattifyBackend) {
     for (notification in notifications.removeWaiting { it.characteristic.server === server }) {
       notification.procedure.reject(error)
     }
-    notifications.inFlight?.takeIf { it.characteristic.server === server }?.let { notification ->
-      notification.procedure.reject(error)
-      watchNotification(notification)
-    }
+    // A notification in flight keeps its place until the stack answers or its watchdog ends the generation.
+    notifications.inFlight?.takeIf { it.characteristic.server === server }?.procedure?.reject(error)
     closeIfIdle()
   }
 
@@ -521,22 +559,26 @@ internal class Peripheral(private val backend: GattifyBackend) {
     value: ByteArray,
   ) {
     val characteristic = byCccd[descriptor]?.takeIf { servers[it.server.id] === it.server }
-    val bits = cccdBits(value)
     val status = when {
       characteristic == null -> Att.WRITE_NOT_PERMITTED
       preparedWrite -> Att.REQUEST_NOT_SUPPORTED
       offset != 0 -> Att.INVALID_OFFSET
-      bits == null -> Att.INVALID_ATTRIBUTE_LENGTH
-      else -> Att.SUCCESS
+      else -> cccdWriteStatus(characteristic.spec.properties, value)
     }
     if (responseNeeded) respond(device, requestId, status, offset, if (status == Att.SUCCESS) value else null)
-    if (characteristic == null || bits == null || status != Att.SUCCESS) return
+    // A rejected write keeps the previous configuration.
+    if (characteristic == null || status != Att.SUCCESS) return
+    val bits = cccdValueOf(value) ?: return
 
     val central = central(device)
     val server = characteristic.server
     val subscribed = central.subscriptions.containsKey(characteristic)
     if (bits == 0) {
       central.subscriptions.remove(characteristic)
+      val unsubscribed = disconnected("${central.id} unsubscribed from ${characteristic.spec.key}")
+      for (notification in notifications.removeWaiting { it.central === central && it.characteristic === characteristic }) {
+        notification.procedure.reject(unsubscribed)
+      }
       if (subscribed) {
         backend.emit(server.owner, Events.subscriptionChanged(server.id, central.id, characteristic.spec.key, null))
       }
@@ -551,13 +593,24 @@ internal class Peripheral(private val backend: GattifyBackend) {
     }
   }
 
-  /** Sends the next notification. One notification is outstanding for the whole server. */
+  /**
+   * Sends the next notification. One notification is outstanding for the whole server,
+   * and only `onNotificationSent` ends it: the callback names no notification, so the
+   * next one never leaves before it. When the stack stays silent past the deadline and a
+   * grace, the generation ends instead.
+   */
   private fun nextNotification() {
     val platform = platformServer ?: return
+    val generation = callback
     while (true) {
       val notification = notifications.next { it.procedure.settled } ?: return
       try {
         guard { send(platform, notification) }
+        val silence = (notification.deadlineAt - backend.scheduler.now()).coerceAtLeast(0) + NOTIFICATION_GRACE_MS
+        notificationWatchdog?.cancel()
+        notificationWatchdog = backend.scheduler.schedule(silence) {
+          if (callback === generation && notifications.inFlight === notification) stalled("notificationTimeout")
+        }
         return
       } catch (e: BleException) {
         notifications.complete(notification)
@@ -574,10 +627,14 @@ internal class Peripheral(private val backend: GattifyBackend) {
   private fun send(platform: BluetoothGattServer, notification: Notification) {
     val device = notification.central.device
     val attribute = notification.characteristic.attribute
+    // The mode the central enabled last decides between a notification and an indication.
+    val bits = notification.central.subscriptions[notification.characteristic]
+      ?: throw disconnected("${notification.central.id} unsubscribed")
+    val confirm = confirms(bits)
     if (Build.VERSION.SDK_INT >= 33) {
-      val code = platform.notifyCharacteristicChanged(device, attribute, notification.confirm, notification.value)
+      val code = platform.notifyCharacteristicChanged(device, attribute, confirm, notification.value)
       if (code != STATUS_SUCCESS) throw statusCodeError(code, "notify")
-    } else if (!legacyNotify(platform, device, attribute, notification.confirm, notification.value)) {
+    } else if (!legacyNotify(platform, device, attribute, confirm, notification.value)) {
       throw internalError("notifyCharacteristicChanged returned false")
     }
   }
@@ -612,18 +669,8 @@ internal class Peripheral(private val backend: GattifyBackend) {
     nextNotification()
   }
 
-  /** Frees the queue when the stack never answers a notification that already timed out. */
-  private fun watchNotification(notification: Notification) {
-    notificationWatchdog?.cancel()
-    notificationWatchdog = backend.scheduler.schedule(NOTIFICATION_GRACE_MS) {
-      if (notifications.inFlight === notification) {
-        Log.w(TAG, "the stack did not confirm a notification to ${notification.central.id}")
-        notificationDone(notification, BleException(ErrorCode.TIMEOUT, "the deadline passed"))
-      }
-    }
-  }
-
   private companion object {
-    const val NOTIFICATION_GRACE_MS = 5_000L
+    /** How long past its deadline a notification may stay unanswered before the generation ends. */
+    const val NOTIFICATION_GRACE_MS = 2_000L
   }
 }
