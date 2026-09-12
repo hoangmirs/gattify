@@ -29,29 +29,43 @@ class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
   /** The permission requests in flight, by their invoke. */
   private val permissionAnswers = ConcurrentHashMap<Invoke, () -> Unit>()
 
-  private val backend = GattifyBackend(
-    activity.applicationContext,
-    object : PermissionHost {
-      override fun permissionState(alias: String): String? = getPermissionState(alias)?.toString()
+  /** The latest event channel. Rust sends it once, so it outlives each backend. */
+  private var channel: Channel? = null
 
-      override fun permissionDeclared(alias: String): Boolean = isPermissionDeclared(alias)
+  /** Created on first use and disposed with the activity. Guarded by this plugin. */
+  private var backend: GattifyBackend? = null
 
-      override fun requestPermissions(aliases: Array<String>, invoke: Invoke, answered: () -> Unit) {
-        permissionAnswers[invoke] = answered
-        activity.runOnUiThread { requestPermissionForAliases(aliases, invoke, "permissionsAnswered") }
-      }
-    },
-  )
+  private val permissionHost = object : PermissionHost {
+    override fun permissionState(alias: String): String? = getPermissionState(alias)?.toString()
+
+    override fun permissionDeclared(alias: String): Boolean = isPermissionDeclared(alias)
+
+    override fun requestPermissions(aliases: Array<String>, invoke: Invoke, answered: () -> Unit) {
+      permissionAnswers[invoke] = answered
+      activity.runOnUiThread { requestPermissionForAliases(aliases, invoke, "permissionsAnswered") }
+    }
+  }
+
+  @Synchronized
+  private fun liveBackend(): GattifyBackend = backend
+    ?: GattifyBackend(activity.applicationContext, permissionHost).also {
+      it.channel = channel
+      backend = it
+    }
 
   @Command
   fun setEventChannel(invoke: Invoke) {
-    backend.channel = invoke.parseArgs(SetEventChannelArgs::class.java).channel
+    val next = invoke.parseArgs(SetEventChannelArgs::class.java).channel
+    synchronized(this) {
+      channel = next
+      backend?.channel = next
+    }
     invoke.resolve()
   }
 
   @Command
   fun execute(invoke: Invoke) {
-    backend.execute(invoke)
+    liveBackend().execute(invoke)
   }
 
   @Suppress("unused")
@@ -60,9 +74,15 @@ class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
     permissionAnswers.remove(invoke)?.invoke()
   }
 
+  /**
+   * Any destruction releases the Bluetooth resources, the receiver and the thread, so
+   * that nothing keeps the activity. The next command creates a new backend.
+   */
   @Suppress("OVERRIDE_DEPRECATION")
   override fun onDestroy() {
     // The newer overload takes an AppCompatActivity, which is not on this module's classpath.
-    if (activity.isFinishing) backend.releaseAll()
+    val released = synchronized(this) { backend.also { backend = null } }
+    released?.dispose()
+    permissionAnswers.clear()
   }
 }

@@ -16,6 +16,7 @@ import android.util.Log
 import app.tauri.plugin.Channel
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal const val TAG = "Gattify"
 
@@ -36,9 +37,10 @@ private class InvokeResponder(private val invoke: Invoke) : Responder {
   override fun reject(message: String, code: String) = invoke.reject(message, code)
 }
 
-private class HandlerScheduler(private val handler: Handler) : Scheduler {
+/** Runs timers on the handler while [active] holds. A disposed backend runs none. */
+private class HandlerScheduler(private val handler: Handler, private val active: () -> Boolean) : Scheduler {
   override fun schedule(delayMs: Long, action: () -> Unit): Cancellable {
-    val runnable = Runnable(action)
+    val runnable = Runnable { if (active()) action() }
     handler.postDelayed(runnable, delayMs)
     return Cancellable { handler.removeCallbacks(runnable) }
   }
@@ -67,16 +69,21 @@ internal inline fun quietly(block: () -> Unit) {
 
 /**
  * The native side of the bridge contract. Every command and every Bluetooth
- * callback runs on one handler thread, so the state needs no locks.
+ * callback runs on one handler thread, so the state needs no locks. The plugin
+ * disposes the backend with its activity and creates a new one for the next command.
  */
-internal class GattifyBackend(val context: Context, private val permissions: PermissionHost) {
+internal class GattifyBackend(val context: Context, permissions: PermissionHost) {
+  private val disposed = AtomicBoolean(false)
   private val thread = HandlerThread("gattify").apply { start() }
   val handler = Handler(thread.looper)
-  val scheduler: Scheduler = HandlerScheduler(handler)
-  val ids = IdAllocator()
-  val devices = RemoteRegistry("device", ids)
+  val scheduler: Scheduler = HandlerScheduler(handler) { !disposed.get() }
+
+  // The IDs belong to the process, so a backend created after this one repeats none.
+  val ids = ProcessIds.allocator
+  val devices = ProcessIds.devices
   private val scannedDevices = HashMap<String, BluetoothDevice>()
   private val procedures = Procedures(scheduler)
+  private var permissions: PermissionHost? = permissions
   private val permissionJobs = ArrayDeque<PermissionJob>()
   private var permissionActive: PermissionJob? = null
 
@@ -111,7 +118,7 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
 
   private val adapterReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-      if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+      if (disposed.get() || intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
       adapterChanged(intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR))
     }
   }
@@ -126,8 +133,9 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
     }
   }
 
+  /** Runs [action] on the handler thread, unless the backend is disposed by then. */
   fun post(action: () -> Unit) {
-    handler.post(action)
+    handler.post { if (!disposed.get()) action() }
   }
 
   /** Called on the Tauri thread. Parses the call, then runs it on the handler thread. */
@@ -141,7 +149,33 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
       invoke.reject("the execute arguments are not valid JSON", ErrorCode.INVALID_ARGUMENT)
       return
     }
-    post { run(request, invoke) }
+    // After dispose the thread quits and drops the post, so the call must still get an answer.
+    if (disposed.get() || !handler.post { run(request, invoke) }) rejectReleased(invoke)
+  }
+
+  /**
+   * Releases everything silently, once: pending calls reject with `cancelled`, the
+   * Bluetooth resources close, the receiver and the references to the plugin go, and
+   * the thread quits.
+   */
+  fun dispose() {
+    if (!disposed.compareAndSet(false, true)) return
+    channel = null
+    try {
+      context.unregisterReceiver(adapterReceiver)
+    } catch (_: IllegalArgumentException) {
+    }
+    handler.post {
+      procedures.abortAll(cancelled("the activity was destroyed"))
+      permissionJobs.clear()
+      permissionActive = null
+      permissions = null
+      scanner.releaseAll()
+      central.closeOwner(null)
+      peripheral.releaseAll()
+      scannedDevices.clear()
+      thread.quitSafely()
+    }
   }
 
   fun emit(ownerId: String, event: JSObject) {
@@ -172,15 +206,15 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
       ?: throw BleException(ErrorCode.UNAVAILABLE, "this device has no Bluetooth adapter")
   }
 
-  /** Releases every resource without events, when the activity finishes. */
-  fun releaseAll() = post {
-    procedures.abortAll(cancelled("the app closed"))
-    scanner.closeOwner(null)
-    central.closeOwner(null)
-    peripheral.closeOwner(null)
+  private fun rejectReleased(invoke: Invoke) {
+    invoke.reject("the plugin released its Bluetooth resources with its activity", ErrorCode.UNAVAILABLE)
   }
 
   private fun run(request: Request, invoke: Invoke) {
+    if (disposed.get()) {
+      rejectReleased(invoke)
+      return
+    }
     val procedure = procedures.start(request.operationId, request.ownerId, InvokeResponder(invoke))
     try {
       when (val result = executeResult(request.kind, probe)) {
@@ -249,17 +283,21 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
     }
   }
 
-  private fun currentPermissions() = permissionOutcomes(Build.VERSION.SDK_INT) { permissions.permissionState(it) }
+  private fun host(): PermissionHost =
+    permissions ?: throw BleException(ErrorCode.UNAVAILABLE, "the plugin released its activity")
+
+  private fun currentPermissions() = permissionOutcomes(Build.VERSION.SDK_INT) { host().permissionState(it) }
 
   private fun requestPermissions(request: Request, procedure: Procedure, invoke: Invoke) {
     val ask = decodePermissionAsk(request.payload())
-    val aliases = aliasesToRequest(ask, Build.VERSION.SDK_INT) { permissions.permissionState(it) }
+    val host = host()
+    val aliases = aliasesToRequest(ask, Build.VERSION.SDK_INT) { host.permissionState(it) }
     if (aliases.isEmpty()) {
       procedure.resolve(Replies.permissions(currentPermissions()))
       return
     }
     // Tauri rejects the call itself for an undeclared permission, and never calls back.
-    aliases.firstOrNull { !permissions.permissionDeclared(it) }?.let {
+    aliases.firstOrNull { !host.permissionDeclared(it) }?.let {
       throw internalError("the app manifest does not declare the permissions of $it")
     }
     procedure.armDeadline(request.deadlineMillis)
@@ -270,11 +308,12 @@ internal class GattifyBackend(val context: Context, private val permissions: Per
   /** Tauri keeps one permission callback at a time, so the prompts run one after another. */
   private fun nextPermissionRequest() {
     if (permissionActive != null) return
+    val host = permissions ?: return
     while (true) {
       val job = permissionJobs.removeFirstOrNull() ?: return
       if (job.procedure.settled) continue
       permissionActive = job
-      permissions.requestPermissions(job.aliases.toTypedArray(), job.invoke) { post { permissionsAnswered(job) } }
+      host.requestPermissions(job.aliases.toTypedArray(), job.invoke) { post { permissionsAnswered(job) } }
       return
     }
   }
