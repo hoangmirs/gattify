@@ -11,3 +11,4 @@
 /crates/tauri-plugin-gattify/ios/.swiftpm/
 /examples/gattify-lab/src-tauri/target/
 /examples/gattify-lab/src-tauri/gen/
+/tests/conformance/macos-probe/build/

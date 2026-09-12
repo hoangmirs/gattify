@@ -2,13 +2,65 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>gattify lab</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <main>
       <h1>gattify lab</h1>
-      <pre id="status">Loading</pre>
+
+      <section id="status">
+        <h2>Adapter</h2>
+        <dl>
+          <dt>State</dt>
+          <dd id="state">…</dd>
+          <dt>Permissions</dt>
+          <dd id="permissions">…</dd>
+          <dt>Central / peripheral</dt>
+          <dd id="roles">…</dd>
+        </dl>
+        <div class="row">
+          <button id="refresh" type="button">Refresh</button>
+          <button id="request" type="button">Request permissions</button>
+        </div>
+      </section>
+
+      <section id="host">
+        <h2>Host</h2>
+        <div class="row">
+          <input id="local-name" maxlength="13" value="gattify lab" aria-label="Local name" />
+          <button id="listen" type="button">Listen</button>
+        </div>
+        <p id="host-status" class="hint">Not listening.</p>
+      </section>
+
+      <section id="join">
+        <h2>Join</h2>
+        <div class="row">
+          <button id="scan" type="button">Scan</button>
+        </div>
+        <ul id="devices" class="list"></ul>
+      </section>
+
+      <section id="chat">
+        <h2>Chat</h2>
+        <ul id="peers" class="list"></ul>
+        <ol id="messages"></ol>
+        <form id="composer" class="row">
+          <input id="text" autocomplete="off" placeholder="Message" aria-label="Message" />
+          <button id="send" type="submit">Send</button>
+        </form>
+        <div class="row">
+          <button id="send-bulk" type="button">Send 4 KiB</button>
+          <button id="close-peer" type="button">Close peer</button>
+        </div>
+      </section>
+
+      <section id="log-section">
+        <h2>Log</h2>
+        <ol id="log"></ol>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

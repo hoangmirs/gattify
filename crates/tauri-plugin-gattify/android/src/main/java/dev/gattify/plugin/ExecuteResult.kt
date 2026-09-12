@@ -7,33 +7,42 @@ internal sealed interface ExecuteResult {
   class Reject(val message: String, val code: String) : ExecuteResult
 }
 
-internal fun executeResult(kind: String?, adapterState: () -> String): ExecuteResult =
-  when (kind) {
-    "getState" -> ExecuteResult.Resolve(reply("state").put("payload", adapterState()))
-    "getCapabilities" -> ExecuteResult.Resolve(reply("capabilities").put("payload", capabilities()))
-    "checkPermissions" -> ExecuteResult.Resolve(reply("permissions").put("payload", unknownPermissions()))
-    "cancel", "closeOwner" -> ExecuteResult.Resolve(reply("empty"))
-    else -> ExecuteResult.Reject(
-      "the Android backend does not implement ${if (kind.isNullOrEmpty()) "this command" else kind} yet",
-      "unsupported",
-    )
-  }
+/** The adapter facts that the status commands read. */
+internal interface StatusProbe {
+  val hasAdapter: Boolean
+  val adapterOn: Boolean
 
-private fun reply(kind: String): JSObject = JSObject().put("kind", kind)
+  /** `BLUETOOTH_CONNECT` is granted on API 31 and later. Always true before. */
+  val connectPermitted: Boolean
+  val hasAdvertiser: Boolean
 
-private fun capabilities(): JSObject {
-  val notImplemented = unknown("backendNotImplemented")
-  return JSObject()
-    .put("central", notImplemented)
-    .put("peripheral", notImplemented)
-    .put("advertising", notImplemented)
-    .put("targetedNotify", notImplemented)
-    .put("simultaneousRoles", notImplemented)
-    .put("background", JSObject().put("level", "unsupported").put("reason", "foregroundOnlyContract"))
+  fun permissions(): PermissionOutcomes
 }
 
-private fun unknownPermissions(): JSObject =
-  JSObject().put("scan", "unknown").put("connect", "unknown").put("advertise", "unknown")
+/**
+ * Answers a status command at once and rejects an unknown command. Returns null
+ * for every other command: the backend runs it.
+ */
+internal fun executeResult(kind: String?, probe: StatusProbe): ExecuteResult? {
+  if (kind == null || kind !in COMMAND_KINDS) {
+    return ExecuteResult.Reject(
+      "the Android backend does not know ${if (kind.isNullOrEmpty()) "this command" else kind}",
+      ErrorCode.UNSUPPORTED,
+    )
+  }
+  return when (kind) {
+    "getState" -> ExecuteResult.Resolve(Replies.state(adapterState(probe)))
+    "getCapabilities" -> ExecuteResult.Resolve(
+      Replies.capabilities(CapabilityFacts(probe.hasAdapter, probe.adapterOn, probe.hasAdvertiser)),
+    )
+    "checkPermissions" -> ExecuteResult.Resolve(Replies.permissions(probe.permissions()))
+    else -> null
+  }
+}
 
-private fun unknown(reason: String): JSObject =
-  JSObject().put("level", "unknown").put("reason", reason)
+internal fun adapterState(probe: StatusProbe): String = when {
+  !probe.hasAdapter -> "unavailable"
+  !probe.connectPermitted -> "unauthorized"
+  probe.adapterOn -> "poweredOn"
+  else -> "poweredOff"
+}

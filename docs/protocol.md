@@ -48,3 +48,42 @@ payloads, admitted complete messages, and the bounded recent-message cache.
 At most 64 partial messages are retained by default. Incomplete reassemblies
 expire after 30 seconds, and impossible declarations such as a non-empty
 message with more fragments than payload bytes are rejected before allocation.
+
+## Session
+
+The Info characteristic holds one byte: the protocol major version, `0x01`. A
+joiner reads it before the handshake and stops with a protocol error for any
+other value.
+
+HELLO, HELLO_ACK and CLOSE are header-only frames with message ID 0.
+
+| Step | Joiner | Host |
+| --- | --- | --- |
+| 1 | Connects, discovers the service, reads Info, subscribes to TX | |
+| 2 | Writes HELLO to RX with a response | |
+| 3 | | Creates a peer for that central and notifies HELLO_ACK on TX |
+| 4 | Treats the peer as ready. Without HELLO_ACK within 10 s, disconnects | |
+
+A second HELLO from a central that has a peer replaces it: the host closes the
+old peer as lost and creates a new one. The host ignores every other frame from
+a central without a peer. The joiner ignores every frame before HELLO_ACK.
+
+DATA and ACK then flow both ways: the joiner writes to RX with a response, and
+the host notifies on TX. Each side keeps one message in flight.
+
+CLOSE ends a peer, and its receiver does not reply. A joiner disconnects after
+it sends or receives CLOSE. A host cannot disconnect a central, so it forgets
+the peer. A lost link, or a central that unsubscribes from TX, closes the peer
+as lost.
+
+## Frame size
+
+The joiner uses the write-with-response limit of the link, and the host uses
+the notification size of the central. Both use 20 bytes when the platform
+reports no size, and never more than 512 bytes, the longest attribute value.
+
+## ACK timing
+
+The 5 s ACK deadline counts from the moment the last fragment of a message is
+written, not from the first. Writing many fragments at a small MTU can take
+longer than 5 s. The 30 s absolute deadline counts from the first fragment.

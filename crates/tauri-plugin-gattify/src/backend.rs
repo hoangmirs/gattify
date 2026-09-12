@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -151,12 +153,27 @@ pub enum Event {
         peer_id: PeerId,
         characteristic_key: String,
         subscribed: bool,
+        max_value_length: Option<u32>,
     },
     CriticalStateLoss {
         resource_id: String,
         reason: String,
     },
 }
+
+/// One event from the native layer, with the owner of its resource.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventEnvelope {
+    pub owner_id: OwnerId,
+    pub event: Event,
+}
+
+/// Receives every event a backend raises, with the owner of its resource.
+///
+/// A backend gets its sink when it is constructed. The sink must not block:
+/// native callbacks call it on platform threads.
+pub type EventSink = Arc<dyn Fn(OwnerId, Event) + Send + Sync>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationContext {
@@ -208,5 +225,47 @@ mod tests {
         .unwrap();
         assert_eq!(event["payload"]["subscriptionId"], "subscription-1");
         assert_eq!(event["payload"]["valueBase64"], "AA==");
+    }
+
+    #[test]
+    fn native_event_envelopes_parse() {
+        let envelope: EventEnvelope = serde_json::from_str(
+            r#"{"ownerId":"webview:main","event":{"kind":"scanStopped","payload":{"scanId":"scan-1"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            envelope,
+            EventEnvelope {
+                owner_id: OwnerId::new("webview:main"),
+                event: Event::ScanStopped {
+                    scan_id: ScanId::new("scan-1")
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn subscription_changes_carry_the_notification_size() {
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "kind": "subscriptionChanged",
+            "payload": {
+                "serverId": "server-1",
+                "peerId": "central-1",
+                "characteristicKey": "peer/tx",
+                "subscribed": true,
+                "maxValueLength": 182
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            event,
+            Event::SubscriptionChanged {
+                server_id: ServerId::new("server-1"),
+                peer_id: PeerId::new("central-1"),
+                characteristic_key: "peer/tx".into(),
+                subscribed: true,
+                max_value_length: Some(182),
+            }
+        );
     }
 }

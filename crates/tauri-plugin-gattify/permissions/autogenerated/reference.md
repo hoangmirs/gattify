@@ -8,6 +8,7 @@ Status-only default permissions for the BLE plugin.
 - `allow-get-capabilities`
 - `allow-check-permissions`
 - `allow-close`
+- `allow-listen-events`
 
 ## Permission Table
 
@@ -372,6 +373,32 @@ Denies the get_state command without any pre-configured scope.
 <tr>
 <td>
 
+`gattify:allow-listen-events`
+
+</td>
+<td>
+
+Enables the listen_events command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`gattify:deny-listen-events`
+
+</td>
+<td>
+
+Denies the listen_events command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `gattify:allow-request-advertise-permission`
 
 </td>
@@ -508,6 +535,22 @@ Create endpoints, connect peers, exchange messages and close peer resources.
 <td>
 
 Start and stop scoped BLE scans.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`gattify:scope`
+
+</td>
+<td>
+
+Lists the service UUIDs that the app allows. Grant it with allow entries such
+as { "serviceUuid": "80ff87c3-8e84-4914-aedc-0d6a3ba5534d" }. It enables no
+command by itself. An empty scope rejects every radio command.
+
 
 </td>
 </tr>

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.1 - 2026-09-12
+
+This prerelease puts the radio to work on Android and iOS. An iPhone hosted a
+peer and exchanged complete messages in both directions with a Mac. Android
+has not run on a device yet.
+
+- Added the Android backend in Kotlin and the iOS backend in Swift. Both
+  implement every command and event of `docs/native-bridge.md`.
+- Added the peer driver: `createEndpoint` with `listen`, `dial`, `send`,
+  `onMessage`, `onClose` and `close` exchange complete messages between phones.
+- Added the `gattify:scope` permission. An app lists its service UUIDs, and
+  every radio command stays inside them. An empty scope rejects every radio
+  command.
+- Events reach only the webview that owns them, through a channel that the
+  webview registers with `listen_events`. `gattify:default` allows it.
+- A page reload or a closed window releases every scan, connection, server and
+  peer of the old page.
+- `gattify://scan-result` carries `{ device }`.
+- The ACK deadline counts from the last written fragment, and ACK frames leave
+  ahead of queued DATA frames.
+- Added the lab app as a two-phone test harness, and a macOS probe that joins
+  or hosts a lab peer.
+
+Not verified on hardware: the iPhone as a joiner, two phones together, any
+Android device, and the two fixes from the first iPhone run. This prerelease
+skips the license review, the SBOM and the fresh-consumer install, by the
+owner's decision.
+
 ## 0.1.0-alpha.0 - 2026-09-12
 
 This prerelease claims the package names. Every radio command returns `Unsupported`.

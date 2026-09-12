@@ -100,6 +100,23 @@ impl<B: Backend> Manager<B> {
             .map_err(|error| error.with_operation(operation_id))
     }
 
+    /// Requests cancellation of every active operation owned by `owner_id`.
+    ///
+    /// Cancellation is best effort: a failure to cancel one operation does not
+    /// stop the others.
+    pub async fn cancel_owner(&self, owner_id: &OwnerId) {
+        let operations: Vec<_> = self
+            .active_operations
+            .lock()
+            .iter()
+            .filter(|(_, owner)| *owner == owner_id)
+            .map(|(operation_id, _)| operation_id.clone())
+            .collect();
+        for operation_id in operations {
+            let _ = self.cancel(owner_id, &operation_id).await;
+        }
+    }
+
     /// Requests cancellation of an active operation owned by `owner_id`.
     ///
     /// Cancellation is idempotent once an operation has completed. Backends may
@@ -226,6 +243,31 @@ mod tests {
                 futures_lite::future::zip(operation, cancellation).await;
             assert_eq!(operation.unwrap_err().code, ErrorCode::Cancelled);
             assert_eq!(cancellation.unwrap(), Reply::Empty);
+        });
+    }
+
+    #[test]
+    fn every_active_operation_of_an_owner_can_be_cancelled() {
+        let manager = Manager::new(CancellableBackend::default());
+        let owner = OwnerId::new("owner-a");
+        futures_lite::future::block_on(async {
+            let operation = manager.execute_with_id(
+                owner.clone(),
+                OperationId::new("operation-a"),
+                Command::StartScan(ScanOptions {
+                    service_uuids: Vec::new(),
+                    timeout_ms: None,
+                }),
+                None,
+            );
+            let cancellation = async {
+                futures_lite::future::yield_now().await;
+                manager.cancel_owner(&OwnerId::new("owner-b")).await;
+                assert!(!manager.backend().cancelled.load(Ordering::Acquire));
+                manager.cancel_owner(&owner).await;
+            };
+            let (operation, ()) = futures_lite::future::zip(operation, cancellation).await;
+            assert_eq!(operation.unwrap_err().code, ErrorCode::Cancelled);
         });
     }
 

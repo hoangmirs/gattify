@@ -457,6 +457,18 @@
           "markdownDescription": "Denies the get_state command without any pre-configured scope."
         },
         {
+          "description": "Enables the listen_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-listen-events",
+          "markdownDescription": "Enables the listen_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the listen_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-listen-events",
+          "markdownDescription": "Denies the listen_events command without any pre-configured scope."
+        },
+        {
           "description": "Enables the request_advertise_permission command without any pre-configured scope.",
           "type": "string",
           "const": "allow-request-advertise-permission",
@@ -511,10 +523,10 @@
           "markdownDescription": "Connect and perform GATT client procedures.\n#### This permission set includes:\n\n- `allow-execute-connect`\n- `allow-request-connect-permission`\n- `allow-cancel`"
         },
         {
-          "description": "Status-only default permissions for the BLE plugin.\n#### This default permission set includes:\n\n- `allow-get-state`\n- `allow-get-capabilities`\n- `allow-check-permissions`\n- `allow-close`",
+          "description": "Status-only default permissions for the BLE plugin.\n#### This default permission set includes:\n\n- `allow-get-state`\n- `allow-get-capabilities`\n- `allow-check-permissions`\n- `allow-close`\n- `allow-listen-events`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Status-only default permissions for the BLE plugin.\n#### This default permission set includes:\n\n- `allow-get-state`\n- `allow-get-capabilities`\n- `allow-check-permissions`\n- `allow-close`"
+          "markdownDescription": "Status-only default permissions for the BLE plugin.\n#### This default permission set includes:\n\n- `allow-get-state`\n- `allow-get-capabilities`\n- `allow-check-permissions`\n- `allow-close`\n- `allow-listen-events`"
         },
         {
           "description": "Create endpoints, connect peers, exchange messages and close peer resources.\n#### This permission set includes:\n\n- `allow-create-endpoint`\n- `allow-dial-peer`\n- `allow-send-peer`\n- `allow-close-peer`\n- `allow-close-endpoint`",
@@ -527,6 +539,12 @@
           "type": "string",
           "const": "scan",
           "markdownDescription": "Start and stop scoped BLE scans.\n#### This permission set includes:\n\n- `allow-execute-scan`\n- `allow-request-scan-permission`\n- `allow-cancel`"
+        },
+        {
+          "description": "Lists the service UUIDs that the app allows. Grant it with allow entries such\nas { \"serviceUuid\": \"80ff87c3-8e84-4914-aedc-0d6a3ba5534d\" }. It enables no\ncommand by itself. An empty scope rejects every radio command.\n",
+          "type": "string",
+          "const": "scope",
+          "markdownDescription": "Lists the service UUIDs that the app allows. Grant it with allow entries such\nas { \"serviceUuid\": \"80ff87c3-8e84-4914-aedc-0d6a3ba5534d\" }. It enables no\ncommand by itself. An empty scope rejects every radio command.\n"
         },
         {
           "description": "Register and manage a local GATT server.\n#### This permission set includes:\n\n- `allow-execute-server`\n- `allow-cancel`",

@@ -57,6 +57,9 @@ struct Pending {
     first_submitted_ms: u64,
     last_submitted_ms: u64,
     retransmissions: u8,
+    /// The caller is still writing the frames. The ACK deadline waits for
+    /// [`Sender::mark_submitted`].
+    submitting: bool,
 }
 
 pub struct Sender {
@@ -116,6 +119,10 @@ impl Sender {
 
     /// Advances stop-and-wait delivery using the supplied monotonic time.
     ///
+    /// After a [`SendAction::Submit`], the caller writes the frames and then
+    /// calls [`Sender::mark_submitted`]. Until then only the absolute deadline
+    /// applies, so a slow write is never retransmitted early.
+    ///
     /// A payload that cannot be framed under the configured limits is reported
     /// as [`SendAction::Failed`] for its own message ID, never dropped silently.
     pub fn poll(&mut self, now_ms: u64) -> SendAction {
@@ -131,6 +138,9 @@ impl Sender {
                     ),
                 };
             }
+            if pending.submitting {
+                return SendAction::Idle;
+            }
             if now_ms.saturating_sub(pending.last_submitted_ms) >= self.limits.ack_deadline_ms {
                 if pending.retransmissions >= self.limits.retransmissions {
                     let message_id = pending.message.message_id;
@@ -142,6 +152,7 @@ impl Sender {
                 }
                 pending.retransmissions += 1;
                 pending.last_submitted_ms = now_ms;
+                pending.submitting = true;
                 return SendAction::Submit {
                     message_id: pending.message.message_id,
                     frames: pending.frames.clone(),
@@ -172,6 +183,7 @@ impl Sender {
             first_submitted_ms: now_ms,
             last_submitted_ms: now_ms,
             retransmissions: 0,
+            submitting: true,
         });
         SendAction::Submit {
             message_id,
@@ -198,6 +210,33 @@ impl Sender {
             )),
             None => Ok(SendAction::Idle),
         }
+    }
+
+    /// Restarts the ACK deadline once the last fragment of `message_id` is written.
+    ///
+    /// Writing many fragments can take longer than the ACK deadline. Counting
+    /// from the last fragment keeps a slow link from retransmitting forever.
+    pub fn mark_submitted(&mut self, message_id: u32, now_ms: u64) {
+        if let Some(pending) = &mut self.pending {
+            if pending.message.message_id == message_id {
+                pending.last_submitted_ms = now_ms;
+                pending.submitting = false;
+            }
+        }
+    }
+
+    /// The message that waits for its ACK.
+    #[must_use]
+    pub fn in_flight(&self) -> Option<u32> {
+        self.pending
+            .as_ref()
+            .map(|pending| pending.message.message_id)
+    }
+
+    /// Whether a message waits for its ACK or in the queue.
+    #[must_use]
+    pub fn has_work(&self) -> bool {
+        self.pending.is_some() || !self.queue.is_empty()
     }
 
     pub fn disconnect(&mut self) -> Vec<QueuedMessage> {
@@ -252,6 +291,7 @@ mod tests {
                 ..
             }
         ));
+        sender.mark_submitted(message_id, 0);
         assert!(matches!(
             sender.poll(5_000),
             SendAction::Submit {
@@ -259,6 +299,7 @@ mod tests {
                 ..
             }
         ));
+        sender.mark_submitted(message_id, 5_000);
         assert!(matches!(
             sender.poll(10_000),
             SendAction::Submit {
@@ -266,6 +307,7 @@ mod tests {
                 ..
             }
         ));
+        sender.mark_submitted(message_id, 10_000);
         let SendAction::Failed {
             message_id: failed,
             error,
@@ -291,6 +333,66 @@ mod tests {
             sender.poll(1),
             SendAction::Submit { message_id, .. } if message_id == second
         ));
+    }
+
+    #[test]
+    fn work_and_the_in_flight_message_are_visible() {
+        let mut sender = Sender::default();
+        assert!(!sender.has_work());
+        assert_eq!(sender.in_flight(), None);
+        let message_id = sender.enqueue(Vec::new()).unwrap();
+        assert!(sender.has_work());
+        assert_eq!(sender.in_flight(), None);
+        sender.poll(0);
+        assert!(sender.has_work());
+        assert_eq!(sender.in_flight(), Some(message_id));
+        sender.acknowledge(message_id).unwrap();
+        assert!(!sender.has_work());
+    }
+
+    #[test]
+    fn the_ack_deadline_counts_from_the_last_fragment() {
+        let mut sender = Sender::default();
+        let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
+        sender.poll(0);
+        sender.mark_submitted(message_id, 4_000);
+        assert_eq!(sender.poll(8_999), SendAction::Idle);
+        assert!(matches!(
+            sender.poll(9_000),
+            SendAction::Submit {
+                retransmission: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn marking_another_message_changes_nothing() {
+        let mut sender = Sender::default();
+        let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
+        sender.poll(0);
+        sender.mark_submitted(message_id + 1, 4_000);
+        assert_eq!(sender.poll(5_000), SendAction::Idle);
+        sender.mark_submitted(message_id, 0);
+        assert!(matches!(sender.poll(5_000), SendAction::Submit { .. }));
+    }
+
+    #[test]
+    fn a_slow_submission_is_never_retransmitted_early() {
+        let mut sender = Sender::default();
+        let message_id = sender.enqueue(b"hello".to_vec()).unwrap();
+        sender.poll(0);
+        assert_eq!(sender.poll(5_000), SendAction::Idle);
+        assert_eq!(sender.poll(29_999), SendAction::Idle);
+        let SendAction::Failed {
+            message_id: failed,
+            error,
+        } = sender.poll(30_000)
+        else {
+            panic!("expected the absolute deadline to fail the message");
+        };
+        assert_eq!(failed, message_id);
+        assert_eq!(error.delivery, Some(DeliveryOutcome::Unknown));
     }
 
     #[test]

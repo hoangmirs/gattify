@@ -193,7 +193,7 @@ class Scan implements ScanHandle {
     private readonly bridge: BleBridge,
     readonly id: ScanId,
   ) {
-    this.#unlisten = subscribe<DiscoveredDevice>(bridge, "gattify://scan-result", (device) => {
+    this.#unlisten = subscribe<{ device: DiscoveredDevice }>(bridge, "gattify://scan-result", ({ device }) => {
       if (device.scanId !== this.id) return;
       this.#devices.set(device.id, device);
       for (const callback of this.#callbacks) callback(device);

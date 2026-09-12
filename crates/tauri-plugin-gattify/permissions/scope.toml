@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "scope"
+description = """
+Lists the service UUIDs that the app allows. Grant it with allow entries such
+as { "serviceUuid": "80ff87c3-8e84-4914-aedc-0d6a3ba5534d" }. It enables no
+command by itself. An empty scope rejects every radio command.
+"""

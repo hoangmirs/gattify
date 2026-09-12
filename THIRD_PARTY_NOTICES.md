@@ -5,6 +5,7 @@ No third-party source is copied into this repository.
 Direct development dependencies currently declared:
 
 - Tauri and @tauri-apps/api — Apache-2.0 OR MIT.
+- tokio — MIT.
 - serde, serde_json, async-trait, base64, parking_lot, thiserror, futures-lite —
   permissive Rust ecosystem licenses; exact resolved versions and transitive
   terms must be confirmed from lockfiles before release.

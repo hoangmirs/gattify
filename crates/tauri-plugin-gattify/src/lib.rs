@@ -8,6 +8,10 @@ mod backend;
 #[cfg(feature = "tauri")]
 mod commands;
 mod error;
+#[cfg(feature = "tauri")]
+mod events;
+#[cfg(any(test, feature = "tauri"))]
+mod gate;
 mod manager;
 #[cfg(any(test, target_os = "android", target_os = "ios"))]
 mod mobile;
@@ -15,19 +19,23 @@ mod mobile;
 mod mock;
 mod model;
 pub mod peer;
+mod scope;
 mod system;
+mod uuid;
 
 use std::sync::Arc;
 
-pub use backend::{Backend, Command, Event, OperationContext, Reply};
+pub use backend::{Backend, Command, Event, EventEnvelope, EventSink, OperationContext, Reply};
 #[cfg(feature = "tauri")]
 pub use commands::init;
 pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};
 pub use manager::Manager;
 #[cfg(feature = "mock")]
-pub use mock::MockBackend;
+pub use mock::{MockAir, MockBackend};
 pub use model::*;
+pub use scope::{ScopeGuard, ServiceScope};
 use system::SystemBackend;
+pub use uuid::normalize_uuid;
 
 #[derive(Clone)]
 pub struct BleRuntime {
@@ -74,6 +82,11 @@ impl BleRuntime {
         self.manager
             .execute_with_id(owner_id, operation_id, command, deadline_millis)
             .await
+    }
+
+    /// Cancels every active operation of `owner_id`, best effort.
+    pub async fn cancel_owner(&self, owner_id: &OwnerId) {
+        self.manager.cancel_owner(owner_id).await;
     }
 
     /// Cancels an active operation owned by the caller.
