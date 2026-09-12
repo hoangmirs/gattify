@@ -2,18 +2,15 @@ package dev.gattify.plugin
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
-import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Channel
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
+import java.util.concurrent.ConcurrentHashMap
 
 @InvokeArg
 class SetEventChannelArgs {
@@ -22,43 +19,50 @@ class SetEventChannelArgs {
 
 @TauriPlugin(
   permissions = [
-    Permission(
-      strings = [
-        Manifest.permission.BLUETOOTH_SCAN,
-        Manifest.permission.BLUETOOTH_CONNECT,
-        Manifest.permission.BLUETOOTH_ADVERTISE,
-      ],
-      alias = "bleRoles",
-    ),
+    Permission(strings = [Manifest.permission.BLUETOOTH_SCAN], alias = PermissionAlias.SCAN),
+    Permission(strings = [Manifest.permission.BLUETOOTH_CONNECT], alias = PermissionAlias.CONNECT),
+    Permission(strings = [Manifest.permission.BLUETOOTH_ADVERTISE], alias = PermissionAlias.ADVERTISE),
+    Permission(strings = [Manifest.permission.ACCESS_FINE_LOCATION], alias = PermissionAlias.LOCATION),
   ],
 )
 class GattifyPlugin(private val activity: Activity) : Plugin(activity) {
-  private var events: Channel? = null
+  /** The permission requests in flight, by their invoke. */
+  private val permissionAnswers = ConcurrentHashMap<Invoke, () -> Unit>()
 
-  private val adapter: BluetoothAdapter?
-    get() = (activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+  private val backend = GattifyBackend(
+    activity.applicationContext,
+    object : PermissionHost {
+      override fun permissionState(alias: String): String? = getPermissionState(alias)?.toString()
+
+      override fun permissionDeclared(alias: String): Boolean = isPermissionDeclared(alias)
+
+      override fun requestPermissions(aliases: Array<String>, invoke: Invoke, answered: () -> Unit) {
+        permissionAnswers[invoke] = answered
+        activity.runOnUiThread { requestPermissionForAliases(aliases, invoke, "permissionsAnswered") }
+      }
+    },
+  )
 
   @Command
   fun setEventChannel(invoke: Invoke) {
-    events = invoke.parseArgs(SetEventChannelArgs::class.java).channel
+    backend.channel = invoke.parseArgs(SetEventChannelArgs::class.java).channel
     invoke.resolve()
   }
 
   @Command
   fun execute(invoke: Invoke) {
-    val kind = invoke.getArgs().getJSObject("command")?.getString("kind")
-    when (val result = executeResult(kind) { state() }) {
-      is ExecuteResult.Resolve -> invoke.resolve(result.reply)
-      is ExecuteResult.Reject -> invoke.reject(result.message, result.code)
-    }
+    backend.execute(invoke)
   }
 
-  private fun state(): String = when {
-    adapter == null -> "unavailable"
-    Build.VERSION.SDK_INT >= 31 &&
-      activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
-        PackageManager.PERMISSION_GRANTED -> "unauthorized"
-    adapter?.isEnabled == true -> "poweredOn"
-    else -> "poweredOff"
+  @Suppress("unused")
+  @PermissionCallback
+  private fun permissionsAnswered(invoke: Invoke) {
+    permissionAnswers.remove(invoke)?.invoke()
+  }
+
+  @Suppress("OVERRIDE_DEPRECATION")
+  override fun onDestroy() {
+    // The newer overload takes an AppCompatActivity, which is not on this module's classpath.
+    if (activity.isFinishing) backend.releaseAll()
   }
 }
