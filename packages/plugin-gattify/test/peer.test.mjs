@@ -172,3 +172,54 @@ test("a scan reads the device out of its event", async () => {
     ["device-1"],
   );
 });
+
+test("a peer that arrives before create_endpoint answers is not lost", async () => {
+  let bridge;
+  bridge = eventBridge({
+    "plugin:gattify|create_endpoint": () => {
+      bridge.emit("gattify://peer-ready", { endpointId: "endpoint-1", peerId: "peer-1", dialed: false });
+      bridge.emit("gattify://peer-message", { peerId: "peer-1", valueBase64: base64(bytes("fast")) });
+      return { endpointId: "endpoint-1" };
+    },
+  });
+  const endpoint = await createEndpoint({ serviceUuid: SERVICE, listen: true, bridge });
+  const peers = [];
+  endpoint.onPeer((peer) => peers.push(peer));
+
+  assert.equal(peers.length, 1);
+  const messages = [];
+  peers[0].onMessage((value) => messages.push(text(value)));
+  assert.deepEqual(messages, ["fast"]);
+});
+
+test("a late dial reply returns the peer that already closed", async () => {
+  let bridge;
+  bridge = eventBridge({
+    "plugin:gattify|dial_peer": () => {
+      bridge.emit("gattify://peer-ready", { endpointId: "endpoint-1", peerId: "peer-9", dialed: true });
+      bridge.emit("gattify://peer-closed", { peerId: "peer-9", reason: "remote" });
+      return { peerId: "peer-9" };
+    },
+  });
+  const endpoint = await createEndpoint({ serviceUuid: SERVICE, bridge });
+
+  const peer = await endpoint.dial("device-1");
+
+  const reason = await new Promise((resolve) => peer.onClose(resolve));
+  assert.equal(reason, "remote");
+});
+
+test("messages kept for a first callback survive the close of their peer", async () => {
+  const bridge = eventBridge();
+  const endpoint = await createEndpoint({ serviceUuid: SERVICE, listen: true, bridge });
+  bridge.emit("gattify://peer-ready", { endpointId: "endpoint-1", peerId: "peer-1", dialed: false });
+  bridge.emit("gattify://peer-message", { peerId: "peer-1", valueBase64: base64(bytes("kept")) });
+  bridge.emit("gattify://peer-closed", { peerId: "peer-1", reason: "remote" });
+
+  const peers = [];
+  endpoint.onPeer((peer) => peers.push(peer));
+  const messages = [];
+  peers[0].onMessage((value) => messages.push(text(value)));
+
+  assert.deepEqual(messages, ["kept"]);
+});
