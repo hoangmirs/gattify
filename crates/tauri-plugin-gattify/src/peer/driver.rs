@@ -85,9 +85,12 @@ pub enum CloseReason {
 /// An event for the webview that owns a peer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PeerEvent {
+    /// A peer can move messages. `dialed` is true for a peer this side dialed,
+    /// false for a peer that dialed this host.
     Ready {
         endpoint_id: String,
         peer_id: PeerId,
+        dialed: bool,
     },
     Message {
         peer_id: PeerId,
@@ -117,7 +120,8 @@ impl PeerEvent {
             Self::Ready {
                 endpoint_id,
                 peer_id,
-            } => json!({ "endpointId": endpoint_id, "peerId": peer_id }),
+                dialed,
+            } => json!({ "endpointId": endpoint_id, "peerId": peer_id, "dialed": dialed }),
             Self::Message { peer_id, bytes } => {
                 json!({ "peerId": peer_id, "valueBase64": BASE64.encode(bytes) })
             }
@@ -892,6 +896,7 @@ impl PeerDriver {
             PeerEvent::Ready {
                 endpoint_id,
                 peer_id,
+                dialed: false,
             },
         ));
     }
@@ -921,6 +926,16 @@ impl PeerDriver {
                         let _ = hello_ack.send(());
                     }
                     peer.wake.notify_one();
+                    // Announced here, on the event path, so the webview learns
+                    // the peer before any message that follows HELLO_ACK.
+                    effects.events.push((
+                        peer.label.clone(),
+                        PeerEvent::Ready {
+                            endpoint_id: peer.endpoint_id.clone(),
+                            peer_id: peer_id.clone(),
+                            dialed: true,
+                        },
+                    ));
                 }
             }
             FrameKind::Hello => {}

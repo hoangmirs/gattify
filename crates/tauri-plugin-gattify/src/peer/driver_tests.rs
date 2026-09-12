@@ -112,7 +112,7 @@ struct Connected {
 }
 
 async fn connected() -> Connected {
-    let (air, mut host, joiner) = pair();
+    let (air, mut host, mut joiner) = pair();
     let host_endpoint = host
         .driver
         .create_endpoint(LABEL, options(true))
@@ -128,9 +128,18 @@ async fn connected() -> Connected {
         .dial(LABEL, &joiner_endpoint, MockAir::device_id(HOST))
         .await
         .unwrap();
+    assert_eq!(
+        joiner.next_event().await,
+        PeerEvent::Ready {
+            endpoint_id: joiner_endpoint,
+            peer_id: joiner_peer.clone(),
+            dialed: true,
+        }
+    );
     let PeerEvent::Ready {
         endpoint_id,
         peer_id: host_peer,
+        dialed: false,
     } = host.next_event().await
     else {
         panic!("expected the host peer");
@@ -515,6 +524,10 @@ async fn frames_stay_within_the_attribute_limit_on_a_large_mtu() {
         .dial(LABEL, &endpoint, MockAir::device_id(HOST))
         .await
         .unwrap();
+    assert!(matches!(
+        joiner.next_event().await,
+        PeerEvent::Ready { dialed: true, .. }
+    ));
     let PeerEvent::Ready {
         peer_id: host_peer, ..
     } = host.next_event().await
@@ -527,4 +540,39 @@ async fn frames_stay_within_the_attribute_limit_on_a_large_mtu() {
     assert_eq!(host.next_event().await, message(&host_peer, &payload));
     send(&host, &host_peer, &payload).await.unwrap();
     assert_eq!(joiner.next_event().await, message(&joiner_peer, &payload));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_joiner_learns_its_peer_before_the_first_message() {
+    let (_air, mut host, mut joiner) = pair();
+    host.driver
+        .create_endpoint(LABEL, options(true))
+        .await
+        .unwrap();
+    let endpoint = joiner
+        .driver
+        .create_endpoint(LABEL, options(false))
+        .await
+        .unwrap();
+    let dialer = joiner.driver.clone();
+    let dial = tokio::spawn(async move {
+        dialer
+            .dial(LABEL, &endpoint, MockAir::device_id(HOST))
+            .await
+    });
+    let PeerEvent::Ready {
+        peer_id: host_peer, ..
+    } = host.next_event().await
+    else {
+        panic!("expected the host peer");
+    };
+
+    send(&host, &host_peer, b"first").await.unwrap();
+
+    let joiner_peer = dial.await.unwrap().unwrap();
+    assert!(matches!(
+        joiner.next_event().await,
+        PeerEvent::Ready { peer_id, dialed: true, .. } if peer_id == joiner_peer
+    ));
+    assert_eq!(joiner.next_event().await, message(&joiner_peer, b"first"));
 }
