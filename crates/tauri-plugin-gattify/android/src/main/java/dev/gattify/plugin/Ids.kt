@@ -1,9 +1,13 @@
 package dev.gattify.plugin
 
-/** Allocates `<prefix>-<n>` IDs. Each prefix counts from 1, and no ID repeats in the process. */
+/**
+ * Allocates `<prefix>-<n>` IDs. Each prefix counts from 1, and no ID repeats in the
+ * process. A recreated backend shares the allocator of the process, so it is locked.
+ */
 internal class IdAllocator {
   private val counters = HashMap<String, Long>()
 
+  @Synchronized
   fun next(prefix: String): String {
     val n = (counters[prefix] ?: 0L) + 1
     counters[prefix] = n
@@ -23,18 +27,29 @@ internal class RemoteRegistry(private val prefix: String, private val ids: IdAll
   private val addressesById = HashMap<String, String>()
   private val families = HashMap<String, MutableSet<String>>()
 
+  @Synchronized
   fun idFor(address: String): String = idsByAddress.getOrPut(address) {
     ids.next(prefix).also { addressesById[it] = address }
   }
 
+  @Synchronized
   fun addressOf(id: String): String? = addressesById[id]
 
+  @Synchronized
   fun markSeen(id: String, ownerId: String) {
     families.getOrPut(id) { HashSet() }.add(ownerFamily(ownerId))
   }
 
+  @Synchronized
   fun seenByFamilyOf(id: String, ownerId: String): Boolean =
     families[id]?.contains(ownerFamily(ownerId)) == true
+}
+
+/** The IDs of the process. A backend recreated with its activity keeps them, so no ID repeats. */
+internal object ProcessIds {
+  val allocator = IdAllocator()
+  val devices = RemoteRegistry("device", allocator)
+  val centrals = RemoteRegistry("central", allocator)
 }
 
 /**

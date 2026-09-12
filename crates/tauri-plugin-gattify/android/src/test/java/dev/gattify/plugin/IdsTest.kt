@@ -18,6 +18,33 @@ class IdsTest {
   }
 
   @Test
+  fun `IDs stay unique when backends on several threads share the allocator`() {
+    val ids = IdAllocator()
+    val devices = RemoteRegistry("device", ids)
+    val allocated = java.util.Collections.synchronizedList(ArrayList<String>())
+    val threads = (0 until 4).map { thread ->
+      Thread {
+        repeat(500) { n ->
+          allocated += ids.next("scan")
+          devices.idFor("AA:BB:CC:DD:${thread}:$n")
+        }
+      }
+    }
+    threads.forEach(Thread::start)
+    threads.forEach(Thread::join)
+    assertEquals(2_000, allocated.toSet().size)
+    // 2,000 addresses took device-1 to device-2000 with no lost increment.
+    assertEquals("device-2001", devices.idFor("AA:BB:CC:DD:EE:FF"))
+  }
+
+  @Test
+  fun `the process registries share one allocator, so a new backend repeats no ID`() {
+    val device = ProcessIds.devices.idFor("11:22:33:44:55:66")
+    assertEquals(device, ProcessIds.devices.idFor("11:22:33:44:55:66"))
+    assertTrue(ProcessIds.centrals.idFor("11:22:33:44:55:66").startsWith("central-"))
+  }
+
+  @Test
   fun `the owner family is the text after the first colon`() {
     assertEquals("main", ownerFamily("webview:main"))
     assertEquals("main", ownerFamily("gattify-peer:main"))
