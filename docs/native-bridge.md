@@ -74,11 +74,18 @@ connection, and queue the others in order. The procedures are the MTU request,
 service discovery, a read, a write with response, and the descriptor write of
 `subscribe` and `unsubscribe`.
 
+- A write without response also takes its turn in the queue, to keep the order
+  of the writes.
 - Check the immediate result of each platform call. When Android returns false
   or an error status, reject the procedure at once and start the next one.
-- When a procedure reaches its deadline, reject it with `timeout`, then close the
-  connection and emit `connectionClosed`. A late callback must never answer a
-  later procedure.
+- A procedure still waiting in the queue at its deadline only rejects with
+  `timeout`: no callback can arrive for it.
+- When a running procedure reaches its deadline, reject it with `timeout`, then
+  close the connection and emit `connectionClosed`. A late callback must never
+  answer a later procedure.
+- A `cancel` or `closeOwner` rejects a running procedure with `cancelled` at
+  once, but the procedure keeps its place until its callback arrives. When no
+  callback arrives by its deadline, the connection closes as for a timeout.
 
 Independent connections run at the same time.
 
@@ -130,6 +137,7 @@ When `deadlineMillis` is null, use these defaults:
 
 | Command | Default |
 | --- | --- |
+| `startScan` | none: the start may wait for the Bluetooth prompt |
 | `connect` | `options.timeoutMs`, else 15000 |
 | `discoverServices` | 10000 |
 | `read`, `write`, `subscribe`, `unsubscribe`, `notify` | 5000 |
@@ -483,6 +491,35 @@ released resources. `closeOwner` is idempotent.
 
 Reply: `{ "kind": "resources", "payload": { "scans", "connections", "subscriptions", "servers" } }`,
 counting the resources of the caller.
+
+## Rules for cases the commands leave open
+
+- An unknown command kind rejects with `unsupported`. A malformed payload
+  rejects with `invalidArgument`.
+- A read, a write or a subscription on a characteristic that lacks the matching
+  property rejects with `unsupported`.
+- A central keeps its `central-<n>` ID for the process, so a central that
+  reconnects keeps its peer ID.
+- `closeServer` rejects the pending notifications of that server with
+  `cancelled`. A notification still queued when its central unsubscribes
+  rejects with `disconnected`.
+- A second `startAdvertising` while a start is still pending rejects with `busy`.
+- Commands that start radio work check that the adapter is on. Cleanup commands
+  (`disconnect`, `unsubscribe`, `closeServer`, `stopAdvertising`) do not, so
+  Rust can release resources after Bluetooth turns off.
+- Android runs one permission request at a time, because Tauri keeps one
+  permission callback.
+
+### When Bluetooth turns off
+
+1. Emit `adapterStateChanged` once to every owner that holds a resource.
+2. Each scan ends with `scanStopped`. Each connected link ends with
+   `connectionClosed`. A pending `connect` rejects with the adapter code.
+3. Each server reports `subscriptionChanged` with `subscribed: false` for every
+   subscriber, then `criticalStateLoss` with the reason `bluetoothOff`. The
+   server stays lost: `closeServer` and `stopAdvertising` still accept it, every
+   other command rejects with `invalidHandle`, and its service UUIDs no longer
+   block a new `createServer`.
 
 ## Events
 
