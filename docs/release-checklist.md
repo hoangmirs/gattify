@@ -20,9 +20,9 @@ For each change that users can see, add a line under `## Unreleased` in `CHANGEL
 
 A release run does not generate an SBOM and does not review licenses. `docs/provenance.md` requires both for a release. Sub-project 5 adds `cargo deny check licenses` to CI.
 
-## Before `0.1.0-alpha.1`
+## Before `0.1.0`
 
-`0.1.0-alpha.0` claims the package names. It skips these checks, by the owner's decision on 12 September 2026. Complete them before `0.1.0-alpha.1`.
+`0.1.0-alpha.0` claims the package names. `0.1.0-alpha.1` ships the Android and iOS backends so that an app can test them. Both skip these checks, by the owner's decision on 12 September 2026. Complete them before `0.1.0`.
 
 - Run `cargo deny check licenses`. Review the licenses of the npm dependencies. Update `THIRD_PARTY_NOTICES.md`.
 - Generate an SPDX or CycloneDX SBOM from `Cargo.lock` and `package-lock.json`, as `docs/provenance.md` requires.
@@ -53,7 +53,7 @@ Do these steps in this order. Do not select **Run workflow** before the phone te
 5. On npmjs.com, add a GitHub Actions trusted publisher to the npm package with the same values. Under **Allowed actions**, allow `npm publish`. A new configuration allows only `npm stage publish`.
 6. On npmjs.com, open **Settings > Publishing access** for the npm package. Select **Require two-factor authentication and disallow tokens**. Trusted publishing continues to work, because it uses a short-lived OIDC token, not a stored token.
 7. On crates.io, revoke the API token from step 3.
-8. After sub-project 5, complete the checks in [Before `0.1.0-alpha.1`](#before-010-alpha1). Sub-project 5 sets the version `0.1.0-alpha.1`. Publish it by hand, as in step 3, with a new crates.io token. `CHANGELOG.md` must keep the `## Unreleased` line above the new version heading, because a release run needs that line.
+8. `0.1.0-alpha.1` was published by hand, as in step 3, before sub-project 5. Complete the checks in [Before `0.1.0`](#before-010) before the first release run. `CHANGELOG.md` must keep the `## Unreleased` line above the new version heading, because a release run needs that line.
 9. After the phone test passes, set the repository variable `RELEASE_ON_MERGE` to `true` in **Settings > Secrets and variables > Actions > Variables**. The next merge into `develop` then publishes `0.1.0`.
 
 ## If a release run fails
