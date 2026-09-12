@@ -8,6 +8,8 @@ mod backend;
 #[cfg(feature = "tauri")]
 mod commands;
 mod error;
+#[cfg(feature = "tauri")]
+mod events;
 mod manager;
 #[cfg(any(test, target_os = "android", target_os = "ios"))]
 mod mobile;
@@ -21,7 +23,7 @@ mod uuid;
 
 use std::sync::Arc;
 
-pub use backend::{Backend, Command, Event, EventSink, OperationContext, Reply};
+pub use backend::{Backend, Command, Event, EventEnvelope, EventSink, OperationContext, Reply};
 #[cfg(feature = "tauri")]
 pub use commands::init;
 pub use error::{BleError, BleResult, DeliveryOutcome, ErrorCode};

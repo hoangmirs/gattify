@@ -24,7 +24,7 @@ These refine the approved spec. Each one closes a gap that the spec leaves open.
 | Characteristic key | `<serviceInstanceKey>/<characteristicInstanceKey>` | Instance keys are unique only inside a service |
 | UUID form | Rust normalizes every UUID to lowercase 128-bit with hyphens before a command reaches native code | Native code compares strings only |
 | Event payload | `gattify://<kind>` carries the event payload. `gattify://scan-result` carries `{ device }`, and the TypeScript scan handle reads `device` | One rule for every event |
-| Webview isolation | Rust emits with `emit_to(EventTarget::webview(label))`. A listener with the default `Any` target in another webview of the same app still receives it | Tauri 2.11 delivers `Any` listeners every event. The first release targets single-webview mobile apps. `docs/native-bridge.md` and the README state the limit |
+| Webview isolation | Each webview registers Tauri channels with `listen_events`, and Rust sends its events only through them | `emit_to(EventTarget::webview(label))` still reaches a listener with the default `Any` target in another webview. A channel delivers only to the webview that created it |
 | Cleanup race | A page load starts owner cleanup and holds a per-label gate. Commands from that label wait for the gate | A reloaded page cannot lose its first scan to the cleanup of the old page |
 
 ## File map

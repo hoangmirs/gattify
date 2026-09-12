@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "get_capabilities",
     "check_permissions",
     "close",
+    "listen_events",
     "create_endpoint",
     "dial_peer",
     "send_peer",

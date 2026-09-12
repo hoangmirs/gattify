@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-listen-events"
+description = "Enables the listen_events command without any pre-configured scope."
+commands.allow = ["listen_events"]
+
+[[permission]]
+identifier = "deny-listen-events"
+description = "Denies the listen_events command without any pre-configured scope."
+commands.deny = ["listen_events"]

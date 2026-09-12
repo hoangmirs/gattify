@@ -545,6 +545,9 @@ Android, emit `subscribed: true` again with the new size.
 - Rust checks roles and the service UUID scope before `execute`. See the scope
   section of `docs/superpowers/specs/2026-09-10-gattify-design.md`.
 - Events for an owner that starts with `gattify-peer:` go to the peer driver.
-  Rust emits every other event only to the owner webview, as
+  Rust sends every other event only to the owner webview, as
   `gattify://<kind in kebab case>` with the event payload. For example,
   `scanResult` becomes `gattify://scan-result` with the payload `{ "device": {...} }`.
+- A webview receives its events through the Tauri channels that it registers
+  with the `listen_events` command. A channel delivers only to the webview that
+  created it. Each message is `{ "event": "gattify://scan-result", "payload": {...} }`.

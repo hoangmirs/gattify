@@ -1,6 +1,17 @@
 {
   "identifier": "default",
-  "description": "Status permissions for the lab window",
+  "description": "The lab window scans, hosts and dials peers on the lab service",
   "windows": ["main"],
-  "permissions": ["core:default", "gattify:default"]
+  "permissions": [
+    "core:default",
+    "gattify:default",
+    "gattify:scan",
+    "gattify:peer",
+    "gattify:allow-request-connect-permission",
+    "gattify:allow-request-advertise-permission",
+    {
+      "identifier": "gattify:scope",
+      "allow": [{ "serviceUuid": "80ff87c3-8e84-4914-aedc-0d6a3ba5534d" }]
+    }
+  ]
 }

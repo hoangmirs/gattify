@@ -29,15 +29,49 @@ pub(crate) use bridge::MobileBackend;
 #[cfg(all(feature = "tauri", any(target_os = "android", target_os = "ios")))]
 mod bridge {
     use async_trait::async_trait;
+    use serde::Serialize;
     use tauri::{
+        ipc::{Channel, InvokeResponseBody},
         plugin::{mobile::PluginInvokeError, PluginHandle},
         Runtime,
     };
 
     use super::{rejected, ExecuteArgs};
-    use crate::{Backend, BleError, BleResult, Command, ErrorCode, OperationContext, Reply};
+    use crate::{
+        Backend, BleError, BleResult, Command, ErrorCode, EventEnvelope, EventSink,
+        OperationContext, Reply,
+    };
 
-    pub(crate) struct MobileBackend<R: Runtime>(pub(crate) PluginHandle<R>);
+    #[derive(Serialize)]
+    struct SetEventChannel {
+        channel: Channel<serde_json::Value>,
+    }
+
+    pub(crate) struct MobileBackend<R: Runtime>(PluginHandle<R>);
+
+    impl<R: Runtime> MobileBackend<R> {
+        /// Wraps the native plugin and gives it the channel for its events.
+        pub(crate) fn new(handle: PluginHandle<R>, sink: EventSink) -> Self {
+            let channel = Channel::<serde_json::Value>::new(move |body| {
+                if let InvokeResponseBody::Json(json) = body {
+                    if let Ok(envelope) = serde_json::from_str::<EventEnvelope>(&json) {
+                        sink(envelope.owner_id, envelope.event);
+                    }
+                }
+                Ok(())
+            });
+            let native = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = native
+                    .run_mobile_plugin_async::<serde_json::Value>(
+                        "setEventChannel",
+                        SetEventChannel { channel },
+                    )
+                    .await;
+            });
+            Self(handle)
+        }
+    }
 
     #[async_trait]
     impl<R: Runtime> Backend for MobileBackend<R> {

@@ -161,6 +161,14 @@ pub enum Event {
     },
 }
 
+/// One event from the native layer, with the owner of its resource.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventEnvelope {
+    pub owner_id: OwnerId,
+    pub event: Event,
+}
+
 /// Receives every event a backend raises, with the owner of its resource.
 ///
 /// A backend gets its sink when it is constructed. The sink must not block:
@@ -217,6 +225,23 @@ mod tests {
         .unwrap();
         assert_eq!(event["payload"]["subscriptionId"], "subscription-1");
         assert_eq!(event["payload"]["valueBase64"], "AA==");
+    }
+
+    #[test]
+    fn native_event_envelopes_parse() {
+        let envelope: EventEnvelope = serde_json::from_str(
+            r#"{"ownerId":"webview:main","event":{"kind":"scanStopped","payload":{"scanId":"scan-1"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            envelope,
+            EventEnvelope {
+                owner_id: OwnerId::new("webview:main"),
+                event: Event::ScanStopped {
+                    scan_id: ScanId::new("scan-1")
+                },
+            }
+        );
     }
 
     #[test]
