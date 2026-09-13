@@ -32,9 +32,11 @@ verified on hardware yet.
   WinRT callback post jobs to it; WinRT async operations run as tasks that post
   their results back. Nothing blocks the thread, and the event sink is called
   with no lock held. The thread lives as long as the process.
-- The first command that needs the adapter loads it with
-  `BluetoothAdapter.GetDefaultAsync`. No adapter, or one without LE, is
-  `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
+- A command that needs the adapter looks it up with
+  `BluetoothAdapter.GetDefaultAsync` when none is known yet, and again while
+  the known one is not on, so that a replaced adapter or a reinstalled driver
+  counts. A new adapter replaces the old one and its radio handler. No
+  adapter, or one without LE, is `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
   `Disabled` (a hardware switch or the firmware) are `poweredOff`, anything
   else is `unknown`. `Radio.StateChanged` drives `adapterStateChanged` and the
   sequence of the contract when Bluetooth turns off. The handler reads the

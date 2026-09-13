@@ -97,7 +97,7 @@ impl Engine {
             next_token: 0,
             operations: HashMap::new(),
             keys: HashMap::new(),
-            adapter: AdapterSlot::Unloaded,
+            adapter: AdapterSlot::default(),
             adapter_states: StateTracker::default(),
             devices: Remotes::new("device"),
             device_links: HashMap::new(),
