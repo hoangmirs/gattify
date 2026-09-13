@@ -28,7 +28,9 @@ fn main() {
             .android_path("android")
             .ios_path("ios")
             .build();
-        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // docs.rs builds without Xcode, and documentation links nothing.
+        let docs_rs = std::env::var_os("DOCS_RS").is_some();
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") && !docs_rs {
             macos::link_engine();
         }
     }
