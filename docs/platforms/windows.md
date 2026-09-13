@@ -154,7 +154,12 @@ verified on hardware yet.
 - Windows raises one `WriteRequested` per write, with an offset and no
   prepare or execute boundary. Each request counts as a whole write: a
   request at another offset than 0 fails with `invalidOffset`. Whether
-  Windows assembles a long write into one request is unverified.
+  Windows assembles a long write into one request is unverified. If it
+  raises each part of a prepared write as its own request instead, the
+  part at offset 0 is emitted as a whole `serverWrite` before the next part
+  fails, and nothing in the request tells the two cases apart. The peer
+  path is safe: a joiner writes at most its `writeWithResponse` limit, one
+  request per write.
 - A server sees no connection events: a central that leaves is noticed when
   it drops out of `SubscribedClients`. A peripheral cannot disconnect a
   central, as on iOS.
