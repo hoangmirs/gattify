@@ -15,6 +15,8 @@ this repository. No third-party code is copied here.
 | tauri 2.11.5 crate source: `src/ipc/channel.rs`, `src/plugin/mobile.rs`, `mobile/*/Channel.*` | 2026-09-10 | Whether a channel from `Channel::new` receives native messages | Apache-2.0 OR MIT | No | Link only |
 | https://github.com/tauri-apps/tauri at `tauri-cli-v2.11.4`: `crates/tauri-cli/templates/plugin`, `crates/tauri-plugin` | 2026-09-10 | Plugin build script, `links` key, Android and iOS project layout | Apache-2.0 OR MIT | No. The build files follow the template layout | Link only |
 | https://github.com/tauri-apps/plugins-workspace at `v2`: `.github/workflows/test-android.yml`, `test-rust.yml`, `plugins/geolocation` | 2026-09-10 | CI method that compiles Kotlin and Swift, and the shape of a channel argument | Apache-2.0 OR MIT | No | Link only |
+| swift-rs 1.0.8 crate source: `src-rs/build.rs`; tauri-utils 2.9.3 crate source: `src/build.rs` | 2026-09-13 | Which link search paths and libraries a Rust build needs for a Swift static library on macOS | Apache-2.0 OR MIT | No. `build.rs` asks `swiftc -print-target-info` itself | Link only |
+| tauri-plugin 2.6.3 crate source: `src/build/mobile.rs`; tauri-codegen 2.6.3 crate source: `src/context.rs` | 2026-09-13 | When Tauri generates its Swift API package, and whether `tauri dev` embeds `Info.plist` on macOS | Apache-2.0 OR MIT | No | Link only |
 
 Dependency versions are recorded in Cargo.lock and package-lock.json after
 resolution. THIRD_PARTY_NOTICES.md records direct dependency licenses. Release

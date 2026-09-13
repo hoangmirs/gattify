@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated: 12 September 2026
+Updated: 13 September 2026
 
 ## Delivered
 
@@ -37,8 +37,17 @@ Updated: 12 September 2026
   `docs/native-bridge.md` on CoreBluetooth, with lazy managers, a GATT
   procedure queue per connection, notification flow control and whole-batch
   server writes.
-- `docs/native-bridge.md`: the contract between Rust and both native layers.
-- The lab app is the two-phone test harness: adapter state and permissions,
+- Sub-project 6, the desktop backends of ADR-003:
+  - macOS runs the Swift engine of iOS. `build.rs` compiles it for macOS
+    without the Tauri iOS entry point, and `macos/Bridge.swift` exposes it
+    through a C ABI that `src/macos.rs` calls.
+  - Windows has a Rust backend on WinRT in `src/winrt`. One engine thread owns
+    all state, as the serial queue of the iOS backend does. Its
+    platform-neutral rules (IDs, queues, scan merging, ATT limits, the name
+    budget, error codes) run as unit tests on every host.
+  - Linux keeps the Unsupported backend.
+- `docs/native-bridge.md`: the contract between Rust and the native layers.
+- The lab app is the two-device test harness: adapter state and permissions,
   host, scan and join, chat with the time from send to ACK, and a log.
 - The TypeScript peer API: `listen`, `onClose`, one handle per peer, early
   messages kept for the first `onMessage`, and events replayed when they race
@@ -49,13 +58,18 @@ Updated: 12 September 2026
 
 ## Tests actually run
 
-- cargo test --workspace --all-features: 85 tests passed.
-- cargo test --workspace --no-default-features: 81 tests passed.
+- cargo test --workspace --all-features on macOS: 140 tests passed, including
+  6 that reach the Swift engine through the C ABI and 49 for the Windows
+  backend's platform-neutral rules.
+- cargo test --workspace --no-default-features: 130 tests passed.
 - cargo clippy --workspace --all-targets --all-features -- -D warnings: clean,
-  also for the aarch64-apple-ios target.
+  also for aarch64-apple-ios, aarch64-linux-android and x86_64-pc-windows-msvc,
+  and for x86_64-pc-windows-msvc without default features.
 - cargo test --manifest-path examples/gattify-lab/src-tauri/Cargo.toml: 9 IPC
   tests passed against Tauri's mock runtime, including the scope and the peer
-  commands.
+  commands. On macOS they run against the real Swift engine.
+- `crates/tauri-plugin-gattify/macos/test.sh`: the 75 XCTests of `ios/Tests`
+  passed on macOS 26.6.
 - npm test: 17 facade and peer tests, 5 offline-chat tests.
 - XCTest on an iOS 26 simulator: 75 tests passed.
 - The lab APK built for aarch64 Android, and `./gradlew
@@ -75,19 +89,25 @@ Updated: 12 September 2026
 - The two fixes above on hardware.
 - The iPhone as a joiner, and two iPhones with each other.
 - Any Android device.
+- Any radio behavior of the macOS backend. The lab app starts on macOS with
+  it, but no scan, connection or server has run yet.
+- The Windows backend at run time. Its WinRT code is compile-verified only;
+  `docs/platforms/windows.md` lists the behavior that needs a Windows run.
 
 ## Incomplete milestones
 
-- M3: concrete macOS, Windows and Linux backends (out of scope for v0.1).
-- M5: physical multi-peer qualification on both platforms.
+- M3: a concrete Linux backend. The macOS and Windows backends exist but await
+  hardware qualification.
+- M5: physical multi-peer qualification on every platform.
 - M6: fresh-consumer crate/package install and SBOM/license scan.
 - Sub-project 5, release preparation.
 
-Desktop builds keep an explicit Unsupported backend. It never substitutes the
+Linux builds keep an explicit Unsupported backend. It never substitutes the
 mock backend.
 
 ## Next step
 
 Run the lab app on two phones: each phone as host and as joiner, a short
-message and a 4 KiB message each way, a close from each side. Record the
-results in `docs/platforms/test-results/`.
+message and a 4 KiB message each way, a close from each side. Then run the
+same with the Mac lab app against an iPhone, and with a Windows PC against a
+phone. Record the results in `docs/platforms/test-results/`.

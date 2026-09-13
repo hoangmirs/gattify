@@ -1,15 +1,21 @@
 # Native bridge contract v1
 
 This document is the contract between the Rust plugin and the native layer:
-Kotlin on Android and Swift on iOS. Both platforms implement it exactly. The
-Rust types in `crates/tauri-plugin-gattify/src/backend.rs` and `src/model.rs`
-are the source of truth for every JSON shape below.
+Kotlin on Android, and Swift on iOS and macOS. Every platform implements it
+exactly. macOS runs the Swift code of iOS, so each rule below that names iOS
+holds on macOS too. The Rust types in `crates/tauri-plugin-gattify/src/backend.rs`
+and `src/model.rs` are the source of truth for every JSON shape below.
+
+The Windows backend is Rust, in `src/winrt`, so it implements the `Backend`
+trait directly instead of this transport. It follows every other rule of this
+document; `docs/platforms/windows.md` lists where Windows cannot.
 
 The native layer does raw GATT only. It knows nothing about the peer protocol.
 
 ## Transport
 
-Rust calls two native commands through the Tauri mobile plugin API.
+On Android and iOS, Rust calls two native commands through the Tauri mobile
+plugin API.
 
 | Command | Arguments | Result |
 | --- | --- | --- |
@@ -32,11 +38,25 @@ The native layer sends each event through the channel as an envelope:
 Send only valid JSON. The Android receiver in Tauri unwraps the parse result,
 so invalid JSON crashes the app.
 
+Tauri has no Swift plugin API on macOS, so `macos/Bridge.swift` exports two C
+functions instead:
+
+| Function | Arguments | Use |
+| --- | --- | --- |
+| `gattify_macos_start` | a reply callback and an event callback | Rust calls it once, before the first `execute`. Swift keeps the latest callbacks |
+| `gattify_macos_execute` | a ticket, and the UTF-8 JSON of the `execute` arguments | Swift copies the JSON before it returns |
+
+Swift answers each ticket exactly once through the reply callback: with
+`resolved` true and a Reply, or `resolved` false and `{ "code", "message" }`.
+It sends each event envelope through the event callback. Both callbacks run on
+the plugin queue and receive UTF-8 JSON that is valid only during the call.
+
 A rejection carries a `code`. Use an error code string from the table below
 when one fits. Otherwise use a platform code: `gattStatus<n>` for an Android
 GATT status, `cbError<n>` for an iOS `CBError`, and `cbAttError<n>` for an iOS
 `CBATTError`. Rust turns an unknown code into `internal` and keeps the platform
-code as `nativeCode`.
+code as `nativeCode`. On Windows, `nativeCode` is `bluetoothError<n>`,
+`gattCommunicationStatus<n>`, `gattProtocolError<n>` or `hresult0x<hex>`.
 
 | Code | Use |
 | --- | --- |
@@ -56,7 +76,9 @@ code as `nativeCode`.
 ## Threading
 
 Tauri calls `execute` on its own thread: a serial `ipc` dispatch queue on iOS,
-a Rust thread through JNI on Android. BLE callbacks arrive on other threads.
+a Rust thread through JNI on Android. On macOS, Rust calls
+`gattify_macos_execute` from a Tokio worker thread. BLE callbacks arrive on
+other threads.
 
 - iOS: create one serial `DispatchQueue` for the plugin. Pass it to
   `CBCentralManager(delegate:queue:)` and `CBPeripheralManager(delegate:queue:)`.
@@ -193,19 +215,20 @@ Reply: `{ "kind": "capabilities", "payload": Capabilities }`, with every field
 present. A `Support` is `{ "level", "reason", "description": null }`. A
 supported capability uses the reason `available`.
 
-| Field | iOS | Android |
-| --- | --- | --- |
-| `central` | supported | supported |
-| `peripheral` | supported | supported when `adapter.bluetoothLeAdvertiser` is not null, else unsupported with `noAdvertiser` |
-| `advertising` | supported | as `peripheral` |
-| `targetedNotify` | supported | as `peripheral` |
-| `simultaneousRoles` | supported | as `peripheral` |
-| `background` | unsupported, `foregroundOnlyContract` | unsupported, `foregroundOnlyContract` |
-| `maxConnections` | null | null |
-| `maxAdvertisingDataLength` | 28 | 31 |
+| Field | iOS and macOS | Android | Windows |
+| --- | --- | --- | --- |
+| `central` | supported | supported | supported when `IsCentralRoleSupported`, else unsupported with `noCentralRole` |
+| `peripheral` | supported | supported when `adapter.bluetoothLeAdvertiser` is not null, else unsupported with `noAdvertiser` | supported when `IsPeripheralRoleSupported`, else unsupported with `noPeripheralRole` |
+| `advertising` | supported | as `peripheral` | as `peripheral` |
+| `targetedNotify` | supported | as `peripheral` | as `peripheral` |
+| `simultaneousRoles` | supported | as `peripheral` | as `peripheral`, when `central` is supported |
+| `background` | unsupported, `foregroundOnlyContract` | unsupported, `foregroundOnlyContract` | unsupported, `foregroundOnlyContract` |
+| `maxConnections` | null | null | null |
+| `maxAdvertisingDataLength` | 28 | 31 | 31, or less when the adapter reports less |
 
-With no adapter, Android reports every capability except `background` as
-unsupported with the reason `noAdapter`.
+With no adapter, Android and Windows report every capability except
+`background` as unsupported with the reason `noAdapter`. Windows uses
+`noLowEnergy` for an adapter without LE.
 
 ### checkPermissions
 
@@ -223,6 +246,8 @@ Each value is `granted`, `promptable`, `deniedPermanently`, `restricted`,
   `shouldShowRequestPermissionRationale` returns false.
 - Android, API 30 and earlier: `scan` follows `ACCESS_FINE_LOCATION`. `connect`
   and `advertise` are `notRequired`.
+- Windows: every role is `notRequired`. A desktop app has no runtime Bluetooth
+  permission, so `requestPermissions` shows nothing either.
 
 ### requestPermissions
 
@@ -424,10 +449,12 @@ Reply: `{ "kind": "advertisingStarted", "payload": { "localNameIncluded", "local
 - One advertisement exists per process. When another server advertises, reject
   with `busy`. When the same server advertises, restart with the new options.
 - Cut the local name at a UTF-8 character boundary to the platform budget:
-  8 bytes on iOS, 13 bytes on Android. On iOS, a 128-bit service UUID takes 18
-  of the 28 foreground advertising bytes, and the name field header takes 2 of
-  the rest. On Android, the scan response holds 31 bytes, and the service data
-  header and UUID take 18. When the name is cut and `localNameOptional` is
+  8 bytes on iOS, 13 bytes on Android and Windows. On iOS, a 128-bit service
+  UUID takes 18 of the 28 foreground advertising bytes, and the name field
+  header takes 2 of the rest. On Android, the scan response holds 31 bytes, and
+  the service data header and UUID take 18. Windows cannot advertise a chosen
+  local name, so it sends the name as service data, as Android does. When the
+  name is cut and `localNameOptional` is
   false, reject with `payloadTooLarge`.
 - iOS: `startAdvertising` with `CBAdvertisementDataServiceUUIDsKey` and
   `CBAdvertisementDataLocalNameKey`. Resolve on `didStartAdvertising`.

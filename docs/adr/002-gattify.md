@@ -1,6 +1,6 @@
 # ADR-002: gattify crate layout and mobile backends
 
-Status: accepted
+Status: accepted. ADR-003 replaces its desktop backend decision.
 Date: 2026-09-10
 
 ## Decision
