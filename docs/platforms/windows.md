@@ -95,7 +95,9 @@ verified on hardware yet.
   characteristic with plain protection and no static value, so every read
   reaches the backend. `busy` rejects a service UUID that another live server
   registered.
-- Server writes are answered in the order they arrived. `notify` sends with
+- Server writes are answered in the order they arrived. A read or a write
+  whose request Windows cannot hand over completes at once without an
+  answer, so that the central does not wait for its ATT timeout. `notify` sends with
   `NotifyValueForSubscribedClientAsync` to the one central and resolves when
   Windows completes it; one notification per server is outstanding. One that
   stays unanswered 2 s past its deadline is given up, and the next one goes.

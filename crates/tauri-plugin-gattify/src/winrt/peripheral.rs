@@ -641,8 +641,12 @@ impl Engine {
                     return;
                 };
                 // The deferral is taken here, before the handler returns.
-                let (Ok(deferral), Ok(request)) = (args.GetDeferral(), args.GetRequestAsync())
-                else {
+                let Ok(deferral) = args.GetDeferral() else {
+                    return;
+                };
+                let Ok(request) = args.GetRequestAsync() else {
+                    // Nothing can answer, so the central need not wait for its ATT timeout.
+                    let _ = deferral.Complete();
                     return;
                 };
                 let central = session_device(args.Session());
@@ -665,13 +669,7 @@ impl Engine {
             >(move |args| {
                 // Numbered on arrival, so that writes answer in the order they came.
                 let number = sequence.fetch_add(1, Ordering::Relaxed);
-                let arrival = args.and_then(|args| {
-                    Some(WriteArrival {
-                        deferral: args.GetDeferral().ok()?,
-                        request: args.GetRequestAsync().ok()?,
-                        central: session_device(args.Session()),
-                    })
-                });
+                let arrival = args.and_then(write_arrival);
                 let (id, key) = (id.clone(), key.clone());
                 poster.post(move |engine| engine.write_arrived(number, id, key, arrival));
             }))
@@ -1697,6 +1695,21 @@ fn provider_status(status: GattServiceProviderAdvertisementStatus) -> ProviderSt
         GattServiceProviderAdvertisementStatus::Aborted => ProviderStatus::Aborted,
         _ => ProviderStatus::Other,
     }
+}
+
+/// Takes the deferral and the request of a write, on the thread of its event.
+fn write_arrival(args: &GattWriteRequestedEventArgs) -> Option<WriteArrival> {
+    let deferral = args.GetDeferral().ok()?;
+    let Ok(request) = args.GetRequestAsync() else {
+        // Nothing can answer, so the central need not wait for its ATT timeout.
+        let _ = deferral.Complete();
+        return None;
+    };
+    Some(WriteArrival {
+        deferral,
+        request,
+        central: session_device(args.Session()),
+    })
 }
 
 /// The key of a characteristic of a server: `<service>/<characteristic>`.
