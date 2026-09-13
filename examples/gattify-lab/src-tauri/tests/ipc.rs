@@ -6,12 +6,20 @@ use tauri::{
     App, Manager, WebviewWindowBuilder,
 };
 
+/// The origin Tauri serves the app from, which the ACL treats as local. WebView2
+/// cannot load a custom scheme, so Windows uses `http://tauri.localhost`.
+const APP_URL: &str = if cfg!(windows) {
+    "http://tauri.localhost"
+} else {
+    "tauri://localhost"
+};
+
 fn request(cmd: &str) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.into(),
         callback: CallbackFn(0),
         error: CallbackFn(1),
-        url: "tauri://localhost".parse().unwrap(),
+        url: APP_URL.parse().unwrap(),
         body: InvokeBody::default(),
         headers: Default::default(),
         invoke_key: INVOKE_KEY.to_string(),
