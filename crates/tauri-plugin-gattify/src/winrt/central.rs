@@ -1,6 +1,10 @@
 use std::{
     collections::HashMap,
     future::IntoFuture,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -85,13 +89,23 @@ struct Subscription {
 
 #[derive(Clone)]
 enum Call {
-    Discover,
+    /// The flag stops the discovery task when the procedure ends early.
+    Discover(Arc<AtomicBool>),
     Read(GattCharacteristic),
     Write(GattCharacteristic, Vec<u8>, WriteType),
     Subscribe(String, Mode),
     Unsubscribe(String),
     /// Undoes the descriptor write of a cancelled subscribe.
     Rollback(String),
+}
+
+impl Call {
+    /// Stops the task of a discovery before its next request to the remote.
+    fn stop(&self) {
+        if let Call::Discover(stop) = self {
+            stop.store(true, Ordering::Release);
+        }
+    }
 }
 
 /// One GATT procedure. `key` is the operation that waits for it, if any.
@@ -237,7 +251,8 @@ impl Engine {
         if let Err(error) = self.connected_link(key, connection_id) {
             return self.reject(key, error);
         }
-        self.enqueue(connection_id, key, Call::Discover);
+        let stop = Arc::new(AtomicBool::new(false));
+        self.enqueue(connection_id, key, Call::Discover(stop));
     }
 
     pub(super) fn read(&mut self, key: u64, connection_id: &ConnectionId, handle: &str) {
@@ -721,6 +736,7 @@ impl Engine {
             if let Some(watchdog) = procedure.watchdog {
                 watchdog.abort();
             }
+            procedure.call.stop();
             if let Some(key) = procedure.key {
                 self.reject(key, closing.error.clone());
             }
@@ -879,11 +895,11 @@ impl Engine {
             engine.procedure_done(&id, token, outcome);
         };
         match call {
-            Call::Discover => {
+            Call::Discover(stop) => {
                 let operation = device
                     .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
                     .map_err(|error| winrt_error(&error, "service discovery"))?;
-                self.spawn(discover(operation), move |engine, outcome| {
+                self.spawn(discover(operation, stop), move |engine, outcome| {
                     done(engine, outcome.map(Done::Services));
                 });
             }
@@ -997,10 +1013,15 @@ impl Engine {
             .get(connection_id)
             .and_then(|link| link.queue.in_flight())
             .is_some_and(|procedure| procedure.token == token);
-        // A late completion of a closed link or of an earlier procedure answers nothing.
+        // A late completion of a closed link or of an earlier procedure
+        // answers nothing, and the services it found close.
         if in_flight {
             self.settle(connection_id, token, outcome);
             self.pump(connection_id);
+        } else if let Ok(Done::Services(found)) = outcome {
+            for (service, _) in found {
+                let _ = service.Close();
+            }
         }
     }
 
@@ -1026,14 +1047,14 @@ impl Engine {
             }
             (Call::Rollback(handle), _) => return self.forget_subscription(connection_id, &handle),
             (_, Err(error)) => Err(error),
-            (Call::Discover, Ok(Done::Services(found))) => {
+            (Call::Discover(_), Ok(Done::Services(found))) => {
                 Ok(Reply::Services(self.catalog(connection_id, found)))
             }
             (Call::Read(_), Ok(Done::Bytes(value))) => Ok(Reply::Bytes {
                 value_base64: BASE64.encode(value),
             }),
             (Call::Write(..), Ok(_)) => Ok(Reply::Empty),
-            (Call::Discover | Call::Read(_), Ok(_)) => Err(BleError::new(
+            (Call::Discover(_) | Call::Read(_), Ok(_)) => Err(BleError::new(
                 ErrorCode::Internal,
                 "the procedure returned the wrong result",
             )),
@@ -1183,6 +1204,8 @@ impl Engine {
                 &Closing::lost("a GATT procedure passed its deadline"),
             );
         }
+        // A discovery nobody waits for stops before its next request.
+        procedure.call.stop();
         let delay = procedure
             .deadline_at
             .saturating_duration_since(Instant::now());
@@ -1305,45 +1328,75 @@ fn check_status(status: GattCommunicationStatus, att: Option<u8>, action: &str) 
 }
 
 /// Discovers every service, then the characteristics of each, from the remote.
+/// Discovers every service, then the characteristics of each, from the
+/// remote. Once `stop` is set, it stops before its next request, so that it
+/// does not keep a closed link alive, and it closes every service it holds
+/// whenever it does not return them.
 async fn discover(
     operation: IAsyncOperation<GattDeviceServicesResult>,
+    stop: Arc<AtomicBool>,
 ) -> BleResult<Vec<(GattDeviceService, Vec<GattCharacteristic>)>> {
     let failed = |error: windows::core::Error| winrt_error(&error, "service discovery");
     let result = operation.await.map_err(failed)?;
-    check_status(
-        result.Status().map_err(failed)?,
-        att_error(result.ProtocolError()),
-        "service discovery",
-    )?;
     let services = result
         .Services()
         .and_then(|services| items(&services))
-        .map_err(failed)?;
-    let mut discovered = Vec::with_capacity(services.len());
-    for service in services {
-        let result = service
-            .GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)
-            .map_err(failed)?
-            .await
-            .map_err(failed)?;
-        let status = result.Status().map_err(failed)?;
-        // Windows keeps some services, such as HID, to itself: they come without characteristics.
-        let characteristics = if status == GattCommunicationStatus::AccessDenied {
-            Vec::new()
-        } else {
-            check_status(
-                status,
-                att_error(result.ProtocolError()),
-                "service discovery",
-            )?;
-            result
-                .Characteristics()
-                .and_then(|characteristics| items(&characteristics))
-                .map_err(failed)?
-        };
-        discovered.push((service, characteristics));
+        .unwrap_or_default();
+    if let Err(error) = result.Status().map_err(failed).and_then(|status| {
+        check_status(
+            status,
+            att_error(result.ProtocolError()),
+            "service discovery",
+        )
+    }) {
+        close_services(&services);
+        return Err(error);
     }
-    Ok(discovered)
+    let mut found = Vec::with_capacity(services.len());
+    for service in &services {
+        let characteristics = if stop.load(Ordering::Acquire) {
+            Err(disconnected("the discovery stopped"))
+        } else {
+            characteristics_of(service).await
+        };
+        match characteristics {
+            Ok(characteristics) => found.push(characteristics),
+            Err(error) => {
+                close_services(&services);
+                return Err(error);
+            }
+        }
+    }
+    Ok(services.into_iter().zip(found).collect())
+}
+
+async fn characteristics_of(service: &GattDeviceService) -> BleResult<Vec<GattCharacteristic>> {
+    let failed = |error: windows::core::Error| winrt_error(&error, "service discovery");
+    let result = service
+        .GetCharacteristicsWithCacheModeAsync(BluetoothCacheMode::Uncached)
+        .map_err(failed)?
+        .await
+        .map_err(failed)?;
+    let status = result.Status().map_err(failed)?;
+    // Windows keeps some services, such as HID, to itself: they come without characteristics.
+    if status == GattCommunicationStatus::AccessDenied {
+        return Ok(Vec::new());
+    }
+    check_status(
+        status,
+        att_error(result.ProtocolError()),
+        "service discovery",
+    )?;
+    result
+        .Characteristics()
+        .and_then(|characteristics| items(&characteristics))
+        .map_err(failed)
+}
+
+fn close_services(services: &[GattDeviceService]) {
+    for service in services {
+        let _ = service.Close();
+    }
 }
 
 async fn read_value(operation: IAsyncOperation<GattReadResult>) -> BleResult<Vec<u8>> {

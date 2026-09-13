@@ -77,7 +77,9 @@ verified on hardware yet.
   its deadline in flight closes the connection with `connectionClosed`. A
   cancelled one keeps its place until its completion, and a cancelled
   subscribe is rolled back before the next procedure. Discovery and reads
-  bypass the Windows cache. A characteristic handle is keyed by its ATT
+  bypass the Windows cache. A discovery that ends early, or whose link
+  closes, stops before its next request and closes the services it holds,
+  so that it cannot keep the link open. A characteristic handle is keyed by its ATT
   handle and UUID, so a second discovery returns the same handle.
 - A read does not conflict with a subscription: Windows reports values
   through `ValueChanged` apart from reads.
