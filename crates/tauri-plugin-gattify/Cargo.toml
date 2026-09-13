@@ -27,6 +27,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tauri = { workspace = true, optional = true, features = ["wry"] }
 
 [build-dependencies]
+serde_json.workspace = true
 tauri-plugin = { version = "=2.6.3", features = ["build"], optional = true }
 
 [dev-dependencies]

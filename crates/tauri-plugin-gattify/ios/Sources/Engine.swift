@@ -3,8 +3,8 @@ import Foundation
 
 typealias EventHandler = (_ ownerId: String, _ event: BridgeEvent) -> Void
 
-/// The iOS backend of the native bridge. Every method runs on `queue`, which is also the
-/// delegate queue of both CoreBluetooth managers.
+/// The CoreBluetooth backend of the native bridge, on iOS and on macOS. Every method runs on
+/// `queue`, which is also the delegate queue of both CoreBluetooth managers.
 final class GattifyEngine: NSObject {
   let queue: DispatchQueue
   let authorization: () -> Authorization

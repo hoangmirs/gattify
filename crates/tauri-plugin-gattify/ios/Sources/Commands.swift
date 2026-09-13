@@ -170,7 +170,7 @@ struct ExecuteRequest: Equatable {
         command = .debugResources
       default:
         let name = kind.isEmpty ? "an empty command kind" : kind
-        return .failure(.unsupported("the iOS backend does not implement \(name)"))
+        return .failure(.unsupported("the CoreBluetooth backend does not implement \(name)"))
       }
     } catch {
       return .failure(.invalidArgument("malformed \(kind) payload: \(describe(error))"))
