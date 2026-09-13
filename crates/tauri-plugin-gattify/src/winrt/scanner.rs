@@ -1,11 +1,17 @@
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use tokio::task::AbortHandle;
 use windows::Devices::Bluetooth::{
     Advertisement::{
         BluetoothLEAdvertisementReceivedEventArgs, BluetoothLEAdvertisementType,
-        BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStoppedEventArgs,
-        BluetoothLEScanningMode,
+        BluetoothLEAdvertisementWatcher, BluetoothLEAdvertisementWatcherStatus,
+        BluetoothLEAdvertisementWatcherStoppedEventArgs, BluetoothLEScanningMode,
     },
     BluetoothAddressType,
 };
@@ -14,8 +20,12 @@ use super::{
     convert::{bytes, handler, items, uuid, winrt_error},
     engine::Engine,
     scan::{discovered, reported_rssi, Packet, ScanFilter, Throttle},
+    status::bluetooth_error,
 };
-use crate::{BleError, BleResult, Event, OwnerId, Reply, ScanId, ScanOptions};
+use crate::{BleError, BleResult, ErrorCode, Event, OwnerId, Reply, ScanId, ScanOptions};
+
+/// No `Stopped` event reported an error yet.
+const NO_STOP_ERROR: i32 = -1;
 
 pub(super) struct ScanRecord {
     pub(super) owner: OwnerId,
@@ -170,11 +180,17 @@ impl Engine {
             }))
             .map_err(failed)?;
         let poster = self.poster.clone();
+        // The error of a stop, for a watcher that Windows aborts at once.
+        let stop_error = Arc::new(AtomicI32::new(NO_STOP_ERROR));
+        let reported = stop_error.clone();
         let stopped = watcher
             .Stopped(&handler::<
                 BluetoothLEAdvertisementWatcher,
                 BluetoothLEAdvertisementWatcherStoppedEventArgs,
-            >(move |_| {
+            >(move |args| {
+                if let Some(error) = args.and_then(|args| args.Error().ok()) {
+                    reported.store(error.0, Ordering::Relaxed);
+                }
                 poster.post(move |engine| engine.watcher_stopped(generation));
             }))
             .map_err(failed)?;
@@ -187,6 +203,15 @@ impl Engine {
         if let Err(error) = record.watcher.Start() {
             record.release();
             return Err(failed(error));
+        }
+        // A successful Start does not prove that the watcher runs.
+        if record.watcher.Status().ok() == Some(BluetoothLEAdvertisementWatcherStatus::Aborted) {
+            record.release();
+            let error = match stop_error.load(Ordering::Relaxed) {
+                NO_STOP_ERROR => BleError::new(ErrorCode::Internal, "Windows aborted the scan"),
+                code => bluetooth_error(code, "starting the scan"),
+            };
+            return Err(error);
         }
         self.watcher = Some(record);
         Ok(())

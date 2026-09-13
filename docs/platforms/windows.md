@@ -56,7 +56,8 @@ verified on hardware yet.
   permission, and a packaged app declares the `bluetooth` capability in its
   manifest. A call that Windows denies rejects with `permissionDenied`.
 - One `BluetoothLEAdvertisementWatcher` in active mode runs while any scan
-  runs. It has no platform filter: each packet goes to every scan whose filter
+  runs. A watcher that Windows aborts right after `Start` rejects `startScan`
+  with the error its `Stopped` event reported. It has no platform filter: each packet goes to every scan whose filter
   matches its services, solicited services or service data. Windows reports an
   advertisement and its scan response as two packets, so the backend keeps the
   latest of each per device and reports them merged. The packets of a device
