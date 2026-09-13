@@ -59,8 +59,9 @@ verified on hardware yet.
   runs. It has no platform filter: each packet goes to every scan whose filter
   matches its services, solicited services or service data. Windows reports an
   advertisement and its scan response as two packets, so the backend keeps the
-  latest of each per device and reports them merged. A device ID stays with
-  its Bluetooth address, which never leaves the backend.
+  latest of each per device and reports them merged. The packets of a device
+  not heard for 60 s are dropped, and at most 1024 cached names stay. A
+  device ID stays with its Bluetooth address, which never leaves the backend.
 - There is no connect call on Windows. `connect` opens the device with
   `FromBluetoothAddressAsync` (with the address type of the last scan result
   when Windows gave one), opens its `GattSession`, and sets

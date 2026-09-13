@@ -13,6 +13,12 @@ use crate::{
 
 /// At most one result per device per scan in this interval.
 pub(super) const RESULT_INTERVAL: Duration = Duration::from_millis(1_000);
+/// How long the packets of a device stay after it was last heard.
+const SIGHTING_LIFETIME: Duration = Duration::from_secs(60);
+/// How often the packets of devices no longer heard are dropped.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(10);
+/// How many cached names stay.
+const CACHED_NAMES: usize = 1_024;
 
 /// The Bluetooth base UUID, `00000000-0000-1000-8000-00805f9b34fb`.
 const BASE_UUID: u128 = 0x0000_0000_0000_1000_8000_0080_5f9b_34fb;
@@ -153,27 +159,41 @@ pub(super) struct Sighting {
     pub(super) connectable: Option<bool>,
 }
 
-#[derive(Default)]
 struct Seen {
     advertisement: Option<Packet>,
     scan_response: Option<Packet>,
-    cached_name: Option<String>,
+    heard: Instant,
+}
+
+struct CachedName {
+    name: String,
+    heard: Instant,
 }
 
 /// Windows reports an advertisement and its scan response as two packets.
 /// This keeps the latest of each per device, so that a filter UUID in the
 /// advertisement still matches when the name arrives in the scan response.
+/// Random addresses rotate, so a device not heard for [`SIGHTING_LIFETIME`]
+/// loses its packets, and at most [`CACHED_NAMES`] names stay.
 #[derive(Default)]
 pub(super) struct Sightings {
     devices: HashMap<u64, Seen>,
+    names: HashMap<u64, CachedName>,
+    swept: Option<Instant>,
 }
 
 impl Sightings {
-    pub(super) fn record(&mut self, address: u64, packet: Packet) -> Sighting {
-        let seen = self.devices.entry(address).or_default();
+    pub(super) fn record(&mut self, address: u64, packet: Packet, now: Instant) -> Sighting {
+        self.sweep(now);
         if let Some(name) = packet.local_name.as_ref().filter(|name| !name.is_empty()) {
-            seen.cached_name = Some(name.clone());
+            self.remember_name(address, name, now);
         }
+        let seen = self.devices.entry(address).or_insert_with(|| Seen {
+            advertisement: None,
+            scan_response: None,
+            heard: now,
+        });
+        seen.heard = now;
         if packet.scan_response {
             seen.scan_response = Some(packet);
         } else {
@@ -188,7 +208,7 @@ impl Sightings {
             local_name: parts
                 .iter()
                 .find_map(|part| part.local_name.clone().filter(|name| !name.is_empty())),
-            cached_name: seen.cached_name.clone(),
+            cached_name: self.names.get(&address).map(|cached| cached.name.clone()),
             service_uuids: Vec::new(),
             match_uuids: BTreeSet::new(),
             service_data: Vec::new(),
@@ -233,11 +253,43 @@ impl Sightings {
 
     /// Forgets the packets when no scan runs. Cached names stay.
     pub(super) fn forget_packets(&mut self) {
-        self.devices.retain(|_, seen| {
-            seen.advertisement = None;
-            seen.scan_response = None;
-            seen.cached_name.is_some()
-        });
+        self.devices.clear();
+    }
+
+    /// Forgets the packets of the devices not heard for [`SIGHTING_LIFETIME`],
+    /// at most once per [`SWEEP_INTERVAL`].
+    fn sweep(&mut self, now: Instant) {
+        if self
+            .swept
+            .is_some_and(|swept| now.saturating_duration_since(swept) < SWEEP_INTERVAL)
+        {
+            return;
+        }
+        self.swept = Some(now);
+        self.devices
+            .retain(|_, seen| now.saturating_duration_since(seen.heard) < SIGHTING_LIFETIME);
+    }
+
+    /// Keeps the name of `address`. Past [`CACHED_NAMES`], the name heard
+    /// longest ago goes.
+    fn remember_name(&mut self, address: u64, name: &str, now: Instant) {
+        self.names.insert(
+            address,
+            CachedName {
+                name: name.to_owned(),
+                heard: now,
+            },
+        );
+        if self.names.len() > CACHED_NAMES {
+            let oldest = self
+                .names
+                .iter()
+                .min_by_key(|(_, cached)| cached.heard)
+                .map(|(address, _)| *address);
+            if let Some(oldest) = oldest {
+                self.names.remove(&oldest);
+            }
+        }
     }
 }
 
@@ -411,10 +463,11 @@ mod tests {
     #[test]
     fn a_filter_uuid_in_the_advertisement_still_matches_when_the_name_arrives_later() {
         let mut sightings = Sightings::default();
-        let first = sightings.record(1, advertisement());
+        let now = Instant::now();
+        let first = sightings.record(1, advertisement(), now);
         assert_eq!(device_name(&first, &filter(&[PEER])), None);
 
-        let merged = sightings.record(1, scan_response(b"Host A"));
+        let merged = sightings.record(1, scan_response(b"Host A"), now);
         assert!(filter(&[PEER]).matches(&merged.match_uuids));
         assert_eq!(merged.service_uuids, vec![PEER.to_owned()]);
         assert_eq!(merged.connectable, Some(true));
@@ -427,14 +480,16 @@ mod tests {
     #[test]
     fn the_name_rule_prefers_the_local_name_then_filter_service_data_then_the_cache() {
         let mut sightings = Sightings::default();
+        let now = Instant::now();
         sightings.record(
             1,
             Packet {
                 local_name: Some("Cached".into()),
                 ..advertisement()
             },
+            now,
         );
-        let mut named = sightings.record(1, scan_response(b"Host A"));
+        let mut named = sightings.record(1, scan_response(b"Host A"), now);
         assert_eq!(named.local_name.as_deref(), Some("Cached"));
         assert_eq!(
             device_name(&named, &filter(&[PEER])).as_deref(),
@@ -452,20 +507,21 @@ mod tests {
         );
         assert_eq!(device_name(&named, &filter(&[])).as_deref(), Some("Cached"));
 
-        let invalid = sightings.record(2, scan_response(&[0xFF, 0xFE]));
+        let invalid = sightings.record(2, scan_response(&[0xFF, 0xFE]), now);
         assert_eq!(device_name(&invalid, &filter(&[PEER])), None);
     }
 
     #[test]
     fn service_data_uuids_and_solicited_uuids_match_filters() {
         let mut sightings = Sightings::default();
-        let data_only = sightings.record(1, scan_response(b"x"));
+        let now = Instant::now();
+        let data_only = sightings.record(1, scan_response(b"x"), now);
         assert!(filter(&[PEER]).matches(&data_only.match_uuids));
         assert_eq!(data_only.connectable, None);
 
         let mut solicited = Packet::default();
         solicited.add_section(0x14, &[0x0D, 0x18]);
-        let sighting = sightings.record(2, solicited);
+        let sighting = sightings.record(2, solicited, now);
         assert!(filter(&[HEART_RATE]).matches(&sighting.match_uuids));
         assert!(sighting.service_uuids.is_empty());
     }
@@ -473,6 +529,7 @@ mod tests {
     #[test]
     fn the_merge_keeps_the_advertisement_fields_first_and_adds_new_ones() {
         let mut sightings = Sightings::default();
+        let now = Instant::now();
         sightings.record(
             1,
             Packet {
@@ -480,6 +537,7 @@ mod tests {
                 service_data: vec![(HEART_RATE.into(), vec![1])],
                 ..advertisement()
             },
+            now,
         );
         let merged = sightings.record(
             1,
@@ -490,6 +548,7 @@ mod tests {
                 service_data: vec![(HEART_RATE.into(), vec![2])],
                 ..Packet::default()
             },
+            now,
         );
         assert_eq!(
             merged.service_uuids,
@@ -502,17 +561,20 @@ mod tests {
     #[test]
     fn forgetting_packets_keeps_the_cached_name() {
         let mut sightings = Sightings::default();
+        let now = Instant::now();
         sightings.record(
             1,
             Packet {
                 local_name: Some("Old".into()),
                 ..advertisement()
             },
+            now,
         );
-        sightings.record(2, advertisement());
+        sightings.record(2, advertisement(), now);
         sightings.forget_packets();
-        assert_eq!(sightings.devices.len(), 1);
-        let later = sightings.record(1, advertisement());
+        assert!(sightings.devices.is_empty());
+        assert_eq!(sightings.names.len(), 1);
+        let later = sightings.record(1, advertisement(), now);
         assert_eq!(later.local_name, None);
         assert_eq!(
             device_name(&later, &filter(&[PEER])).as_deref(),
@@ -521,16 +583,61 @@ mod tests {
     }
 
     #[test]
+    fn a_device_not_heard_for_a_minute_loses_its_packets() {
+        let mut sightings = Sightings::default();
+        let start = Instant::now();
+        sightings.record(1, advertisement(), start);
+        sightings.record(2, advertisement(), start + Duration::from_secs(50));
+        sightings.record(
+            3,
+            Packet::default(),
+            start + SIGHTING_LIFETIME + Duration::from_secs(1),
+        );
+        assert!(!sightings.devices.contains_key(&1));
+        let later = start + SIGHTING_LIFETIME + Duration::from_secs(2);
+        let returned = sightings.record(1, scan_response(b"Host A"), later);
+        assert!(returned.service_uuids.is_empty());
+        assert_eq!(returned.connectable, None);
+        let kept = sightings.record(2, scan_response(b"Host B"), later);
+        assert_eq!(kept.service_uuids, vec![PEER.to_owned()]);
+    }
+
+    #[test]
+    fn the_name_cache_keeps_the_names_heard_most_recently() {
+        let mut sightings = Sightings::default();
+        let start = Instant::now();
+        let named = |index: u64| Packet {
+            local_name: Some(format!("Device {index}")),
+            ..advertisement()
+        };
+        for index in 0..=CACHED_NAMES as u64 {
+            sightings.record(index, named(index), start + Duration::from_millis(index));
+        }
+        assert_eq!(sightings.names.len(), CACHED_NAMES);
+        let now = start + Duration::from_secs(5);
+        assert_eq!(sightings.record(0, advertisement(), now).cached_name, None);
+        assert_eq!(
+            sightings
+                .record(1, advertisement(), now)
+                .cached_name
+                .as_deref(),
+            Some("Device 1")
+        );
+    }
+
+    #[test]
     fn a_result_carries_the_merged_fields_and_its_scan() {
         let mut sightings = Sightings::default();
+        let now = Instant::now();
         sightings.record(
             1,
             Packet {
                 manufacturer_data: vec![(76, vec![1, 2])],
                 ..advertisement()
             },
+            now,
         );
-        let sighting = sightings.record(1, scan_response(b"Host A"));
+        let sighting = sightings.record(1, scan_response(b"Host A"), now);
         let device = discovered(
             "device-3",
             &ScanId::new("scan-1"),

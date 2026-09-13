@@ -207,8 +207,10 @@ impl Engine {
         if self.watcher.as_ref().map(|watcher| watcher.generation) != Some(generation) {
             return;
         }
-        let sighting = self.sightings.record(received.address, received.packet);
         let now = Instant::now();
+        let sighting = self
+            .sightings
+            .record(received.address, received.packet, now);
         let observed_at = wall_clock_millis();
         let Self {
             scans,
