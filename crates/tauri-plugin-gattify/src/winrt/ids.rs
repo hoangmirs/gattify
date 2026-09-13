@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     hash::Hash,
 };
 
@@ -124,6 +124,27 @@ impl<T> HandleTable<T> {
     }
 }
 
+/// Takes out the service objects that can close, each tagged with its
+/// discovery: those of the latest discovery, and of one that `in_use` names,
+/// stay.
+pub(super) fn stale_services<T>(
+    services: &mut Vec<(u64, T)>,
+    latest: u64,
+    in_use: &BTreeSet<u64>,
+) -> Vec<T> {
+    let mut stale = Vec::new();
+    let mut kept = Vec::with_capacity(services.len());
+    for (generation, service) in services.drain(..) {
+        if generation == latest || in_use.contains(&generation) {
+            kept.push((generation, service));
+        } else {
+            stale.push(service);
+        }
+    }
+    *services = kept;
+    stale
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +208,22 @@ mod tests {
         assert_eq!(
             table.characteristic((9, "new".into()), "new"),
             "connection-2/characteristic-3"
+        );
+    }
+
+    #[test]
+    fn services_of_older_discoveries_close_unless_a_subscription_uses_them() {
+        let mut services = vec![(1, "old a"), (1, "old b"), (2, "used"), (3, "latest")];
+        let in_use: BTreeSet<u64> = [2].into_iter().collect();
+        assert_eq!(
+            stale_services(&mut services, 3, &in_use),
+            vec!["old a", "old b"]
+        );
+        assert_eq!(services, vec![(2, "used"), (3, "latest")]);
+        assert!(stale_services(&mut services, 3, &in_use).is_empty());
+        assert_eq!(
+            stale_services(&mut services, 3, &BTreeSet::new()),
+            vec!["used"]
         );
     }
 }

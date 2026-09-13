@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     future::IntoFuture,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -34,7 +34,7 @@ use super::{
         check_access, check_write_length, link_limits, properties_from_bits, Access, Mode,
         DEFAULT_ATT_MTU,
     },
-    ids::HandleTable,
+    ids::{stale_services, HandleTable},
     queue::ProcedureQueue,
     status::communication_error,
 };
@@ -88,6 +88,8 @@ enum SubscriptionPhase {
 struct Subscription {
     id: SubscriptionId,
     characteristic: GattCharacteristic,
+    /// The discovery that gave the characteristic. Its services stay open.
+    generation: u64,
     value_token: Option<i64>,
     phase: SubscriptionPhase,
     /// Values that arrived before the subscribe resolved, emitted right after.
@@ -98,8 +100,10 @@ struct Subscription {
 enum Call {
     /// The flag stops the discovery task when the procedure ends early.
     Discover(Arc<AtomicBool>),
-    Read(GattCharacteristic),
-    Write(GattCharacteristic, Vec<u8>, WriteType),
+    /// A read or a write names its handle, so that it uses the objects of
+    /// the latest discovery when it starts.
+    Read(String),
+    Write(String, Vec<u8>, WriteType),
     Subscribe(String, Mode),
     Unsubscribe(String),
     /// Undoes the descriptor write of a cancelled subscribe.
@@ -170,8 +174,11 @@ pub(super) struct Connection {
     close_timer: Option<AbortHandle>,
     disconnects: Vec<u64>,
     handles: HandleTable<GattCharacteristic>,
-    /// Every service object a discovery returned. They close with the link.
-    services: Vec<GattDeviceService>,
+    /// The number of the latest discovery, whose objects the handles hold.
+    generation: u64,
+    /// The service objects of each discovery. Those of an older discovery
+    /// close once no subscription uses them, and every one with the link.
+    services: Vec<(u64, GattDeviceService)>,
     subscriptions: HashMap<String, Subscription>,
     queue: ProcedureQueue<Procedure>,
 }
@@ -265,12 +272,9 @@ impl Engine {
     pub(super) fn read(&mut self, key: u64, connection_id: &ConnectionId, handle: &str) {
         let checked = self
             .link_characteristic(key, connection_id, handle)
-            .and_then(|characteristic| {
-                check_access(&properties(&characteristic), Access::Read)?;
-                Ok(characteristic)
-            });
+            .and_then(|characteristic| check_access(&properties(&characteristic), Access::Read));
         match checked {
-            Ok(characteristic) => self.enqueue(connection_id, key, Call::Read(characteristic)),
+            Ok(_) => self.enqueue(connection_id, key, Call::Read(handle.to_owned())),
             Err(error) => self.reject(key, error),
         }
     }
@@ -293,7 +297,7 @@ impl Engine {
                     .map_or(DEFAULT_ATT_MTU, Connection::mtu);
                 check_write_length(value.len(), write_type, mtu)?;
                 check_access(&properties(&characteristic), Access::Write(write_type))?;
-                Ok(Call::Write(characteristic, value, write_type))
+                Ok(Call::Write(handle.to_owned(), value, write_type))
             });
         match checked {
             Ok(call) => self.enqueue(connection_id, key, call),
@@ -328,11 +332,13 @@ impl Engine {
         };
         // The reservation makes another subscribe busy until this one ends,
         // including the rollback of a cancelled one.
+        let generation = link.generation;
         link.subscriptions.insert(
             handle.to_owned(),
             Subscription {
                 id,
                 characteristic,
+                generation,
                 value_token: None,
                 phase: SubscriptionPhase::Enabling,
                 early: Vec::new(),
@@ -437,6 +443,7 @@ impl Engine {
                 close_timer: None,
                 disconnects: Vec::new(),
                 handles: HandleTable::new(connection_id.as_str()),
+                generation: 0,
                 services: Vec::new(),
                 subscriptions: HashMap::new(),
                 queue: ProcedureQueue::default(),
@@ -724,8 +731,11 @@ impl Engine {
             }
         }
         link.handles.forget_attributes();
-        let mut closing_objects: Vec<Closable> =
-            link.services.drain(..).map(Closable::Service).collect();
+        let mut closing_objects: Vec<Closable> = link
+            .services
+            .drain(..)
+            .map(|(_, service)| Closable::Service(service))
+            .collect();
         if let Some(device) = link.device.take() {
             if let Some(token) = link.status_token.take() {
                 let _ = device.RemoveConnectionStatusChanged(token);
@@ -914,19 +924,21 @@ impl Engine {
                     done(engine, outcome.map(Done::Services));
                 });
             }
-            Call::Read(characteristic) => {
-                let operation = characteristic
+            Call::Read(handle) => {
+                let operation = self
+                    .current_characteristic(connection_id, &handle)?
                     .ReadValueWithCacheModeAsync(BluetoothCacheMode::Uncached)
                     .map_err(|error| winrt_error(&error, "the read"))?;
                 self.spawn(read_value(operation), move |engine, outcome| {
                     done(engine, outcome.map(Done::Bytes));
                 });
             }
-            Call::Write(characteristic, value, write_type) => {
+            Call::Write(handle, value, write_type) => {
                 let option = match write_type {
                     WriteType::WithResponse => GattWriteOption::WriteWithResponse,
                     WriteType::WithoutResponse => GattWriteOption::WriteWithoutResponse,
                 };
+                let characteristic = self.current_characteristic(connection_id, &handle)?;
                 let operation = buffer(&value)
                     .and_then(|value| {
                         characteristic.WriteValueWithResultAndOptionAsync(&value, option)
@@ -978,6 +990,34 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The characteristic behind `handle` in the latest discovery.
+    fn current_characteristic(
+        &self,
+        connection_id: &ConnectionId,
+        handle: &str,
+    ) -> BleResult<GattCharacteristic> {
+        self.connections
+            .get(connection_id)
+            .and_then(|link| link.handles.get(handle))
+            .cloned()
+            .ok_or_else(|| BleError::invalid_handle(handle))
+    }
+
+    /// Closes the service objects of older discoveries that no subscription
+    /// uses any more.
+    fn prune_services(&mut self, connection_id: &ConnectionId) {
+        let Some(link) = self.connections.get_mut(connection_id) else {
+            return;
+        };
+        let in_use: BTreeSet<u64> = link
+            .subscriptions
+            .values()
+            .map(|subscription| subscription.generation)
+            .collect();
+        let stale = stale_services(&mut link.services, link.generation, &in_use);
+        close_in_background(stale.into_iter().map(Closable::Service).collect());
     }
 
     /// Registers the value handler of a reserved subscription before its
@@ -1197,6 +1237,7 @@ impl Engine {
             let _ = subscription.characteristic.RemoveValueChanged(token);
         }
         self.subscriptions.remove(&subscription.id);
+        self.prune_services(connection_id);
     }
 
     /// A deadline, `cancel` or `closeOwner` ended the operation of a procedure.
@@ -1285,6 +1326,8 @@ impl Engine {
             return Vec::new();
         };
         link.handles.forget_attributes();
+        link.generation += 1;
+        let generation = link.generation;
         let mut instances = Vec::with_capacity(found.len());
         for (service, characteristics) in found {
             let service_uuid = service.Uuid().map(uuid).unwrap_or_default();
@@ -1310,13 +1353,14 @@ impl Engine {
                     }
                 })
                 .collect();
-            link.services.push(service);
+            link.services.push((generation, service));
             instances.push(ServiceInstance {
                 handle: ServiceHandle::new(service_handle),
                 uuid: service_uuid,
                 characteristics,
             });
         }
+        self.prune_services(connection_id);
         instances
     }
 

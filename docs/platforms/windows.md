@@ -81,7 +81,9 @@ verified on hardware yet.
   subscribe is rolled back before the next procedure. Discovery and reads
   bypass the Windows cache. A discovery that ends early, or whose link
   closes, stops before its next request and closes the services it holds,
-  so that it cannot keep the link open. A characteristic handle is keyed by its ATT
+  so that it cannot keep the link open. Reads and writes use the objects of
+  the latest discovery, and a new discovery closes the service objects of
+  older ones that no subscription uses. A characteristic handle is keyed by its ATT
   handle and UUID, so a second discovery returns the same handle.
 - A read does not conflict with a subscription: Windows reports values
   through `ValueChanged` apart from reads. The value handler is registered
