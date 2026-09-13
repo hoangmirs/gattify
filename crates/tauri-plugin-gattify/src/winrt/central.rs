@@ -588,6 +588,33 @@ impl Engine {
         }
         if active {
             self.link_up(connection_id);
+        } else {
+            self.request_link(connection_id);
+        }
+    }
+
+    /// Some adapters connect only for a request (bleak reports it), so a
+    /// session that is not active yet asks for the cached services. The
+    /// answer closes unread; `SessionStatusChanged` reports the link.
+    fn request_link(&mut self, connection_id: &ConnectionId) {
+        let request = self
+            .connecting(connection_id)
+            .and_then(|link| link.device.as_ref())
+            .and_then(|device| {
+                device
+                    .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Cached)
+                    .ok()
+            });
+        if let Some(request) = request {
+            tokio::spawn(async move {
+                if let Ok(result) = request.await {
+                    let services = result
+                        .Services()
+                        .and_then(|services| items(&services))
+                        .unwrap_or_default();
+                    close_services(&services);
+                }
+            });
         }
     }
 
@@ -1423,7 +1450,6 @@ fn check_status(status: GattCommunicationStatus, att: Option<u8>, action: &str) 
     }
 }
 
-/// Discovers every service, then the characteristics of each, from the remote.
 /// Discovers every service, then the characteristics of each, from the
 /// remote. Once `stop` is set, it stops before its next request, so that it
 /// does not keep a closed link alive, and it closes every service it holds

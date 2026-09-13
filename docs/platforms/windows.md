@@ -66,9 +66,11 @@ verified on hardware yet.
 - There is no connect call on Windows. `connect` opens the device with
   `FromBluetoothAddressAsync` (with the address type of the last scan result
   when Windows gave one), opens its `GattSession`, and sets
-  `MaintainConnection`. It resolves when the session is active and
-  `MaxPduSize`, the ATT MTU, exceeds 23, or 1 s after the session became
-  active. The limits are `min(mtu - 3, 512)`.
+  `MaintainConnection`. A session that is not active at once gets a request
+  for the cached services, whose answer closes unread: bleak reports adapters
+  that connect only for a request (unverified here). It resolves when the
+  session is active and `MaxPduSize`, the ATT MTU, exceeds 23, or 1 s after
+  the session became active. The limits are `min(mtu - 3, 512)`.
 - `disconnect` removes the value handlers, then closes every service, the
   device and the session, so that Windows can drop the link, and replies when
   the session reports the close or after 2 s. The `Close` calls run on a
