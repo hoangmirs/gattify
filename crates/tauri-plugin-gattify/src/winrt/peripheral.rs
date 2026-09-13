@@ -50,6 +50,8 @@ const NOTIFICATION_GRACE: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(5);
 /// How often the status of a provider is read while a call waits for it.
 const PUBLICATION_CHECK: Duration = Duration::from_secs(1);
+/// How long a write waits for its request before the writes after it go on.
+const WRITE_REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ServerState {
@@ -1339,6 +1341,9 @@ impl Engine {
         let _ = deferral.Complete();
     }
 
+    /// Queues a write until Windows hands over its request. A request that
+    /// takes longer than 5 s gives up the write: its deferral completes
+    /// without an answer, and the writes after it go on.
     fn write_arrived(
         &mut self,
         number: u64,
@@ -1346,26 +1351,36 @@ impl Engine {
         characteristic_key: String,
         arrival: Option<WriteArrival>,
     ) {
-        match arrival {
-            None => self.writes.fill(number, None),
-            Some(arrival) => {
-                self.writes.expect(number);
-                self.spawn(arrival.request.into_future(), move |engine, request| {
-                    engine.writes.fill(
-                        number,
-                        Some(ReadyWrite {
-                            server_id,
-                            characteristic_key,
-                            central: arrival.central,
-                            deferral: arrival.deferral,
-                            request: request.ok(),
-                        }),
-                    );
-                    engine.answer_writes();
-                });
+        let Some(arrival) = arrival else {
+            self.writes.fill(number, None);
+            return self.answer_writes();
+        };
+        self.writes.expect(number);
+        let expired = ReadyWrite {
+            server_id: server_id.clone(),
+            characteristic_key: characteristic_key.clone(),
+            central: arrival.central.clone(),
+            deferral: arrival.deferral.clone(),
+            request: None,
+        };
+        self.after(WRITE_REQUEST_WAIT, move |engine| {
+            if engine.writes.fill(number, Some(expired)) {
+                engine.answer_writes();
             }
-        }
-        self.answer_writes();
+        });
+        self.spawn(arrival.request.into_future(), move |engine, request| {
+            let write = ReadyWrite {
+                server_id,
+                characteristic_key,
+                central: arrival.central,
+                deferral: arrival.deferral,
+                request: request.ok(),
+            };
+            // After the wait ran out, the write is gone.
+            if engine.writes.fill(number, Some(write)) {
+                engine.answer_writes();
+            }
+        });
     }
 
     fn answer_writes(&mut self) {

@@ -104,10 +104,21 @@ impl<T> InOrder<T> {
         self.slots.insert(sequence, Slot::Pending);
     }
 
-    /// Fills `sequence` with its entry, or skips it with `None`.
-    pub(super) fn fill(&mut self, sequence: u64, item: Option<T>) {
+    /// Fills `sequence` with its entry, or skips it with `None`. Only the
+    /// first fill counts: a number that holds an entry, or was handed out,
+    /// refuses the next one, which returns `false`.
+    pub(super) fn fill(&mut self, sequence: u64, item: Option<T>) -> bool {
+        if sequence < self.next
+            || matches!(
+                self.slots.get(&sequence),
+                Some(Slot::Ready(_) | Slot::Skipped)
+            )
+        {
+            return false;
+        }
         self.slots
             .insert(sequence, item.map_or(Slot::Skipped, Slot::Ready));
+        true
     }
 
     /// The next entry in sequence, when it is ready.
@@ -179,6 +190,24 @@ mod tests {
         assert_eq!(writes.pop(), Some("first"));
         assert_eq!(writes.pop(), Some("second"));
         assert_eq!(writes.pop(), None);
+    }
+
+    #[test]
+    fn only_the_first_fill_of_a_number_counts() {
+        let mut writes = InOrder::default();
+        writes.expect(0);
+        writes.expect(1);
+        assert!(writes.fill(1, Some("second")));
+        // The wait for the first ran out before its entry arrived.
+        assert!(writes.fill(0, Some("expired")));
+        assert!(!writes.fill(0, Some("late")));
+        assert!(!writes.fill(1, None));
+        assert_eq!(writes.pop(), Some("expired"));
+        assert_eq!(writes.pop(), Some("second"));
+        assert!(!writes.fill(0, Some("after it was handed out")));
+        assert_eq!(writes.pop(), None);
+        assert!(writes.fill(2, Some("third")));
+        assert_eq!(writes.pop(), Some("third"));
     }
 
     #[test]
