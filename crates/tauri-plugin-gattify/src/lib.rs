@@ -32,6 +32,8 @@ pub mod peer;
 mod scope;
 mod system;
 mod uuid;
+#[cfg(test)]
+mod winrt;
 
 use std::sync::Arc;
 
