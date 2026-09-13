@@ -32,7 +32,7 @@ pub mod peer;
 mod scope;
 mod system;
 mod uuid;
-#[cfg(test)]
+#[cfg(any(test, all(feature = "tauri", target_os = "windows")))]
 mod winrt;
 
 use std::sync::Arc;

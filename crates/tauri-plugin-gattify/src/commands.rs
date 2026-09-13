@@ -473,7 +473,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 let _ = api;
                 crate::macos::MacosBackend::new(sink)
             };
-            #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            let backend = {
+                let _ = api;
+                crate::winrt::WindowsBackend::new(sink)
+            };
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "ios",
+                target_os = "macos",
+                target_os = "windows"
+            )))]
             let backend = {
                 let _ = (api, sink);
                 crate::SystemBackend
