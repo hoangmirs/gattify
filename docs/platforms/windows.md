@@ -35,8 +35,9 @@ verified on hardware yet.
 - A command that needs the adapter looks it up with
   `BluetoothAdapter.GetDefaultAsync` when none is known yet, and again while
   the known one is not on, so that a replaced adapter or a reinstalled driver
-  counts. A new adapter replaces the old one and its radio handler. No
-  adapter, or one without LE, is `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
+  counts. A new adapter replaces the old one and its radio handler. A lookup
+  that takes longer than 5 s counts as no adapter. No adapter, or one
+  without LE, is `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
   `Disabled` (a hardware switch or the firmware) are `poweredOff`, anything
   else is `unknown`. `Radio.StateChanged` drives `adapterStateChanged` and the
   sequence of the contract when Bluetooth turns off. The handler reads the

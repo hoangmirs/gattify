@@ -1,5 +1,6 @@
-use std::future::IntoFuture;
+use std::{future::IntoFuture, time::Duration};
 
+use tokio::task::AbortHandle;
 use windows::{
     core::IInspectable,
     Devices::{
@@ -15,14 +16,27 @@ use super::{
 };
 use crate::{AdapterState, BleError};
 
+/// How long a lookup of the adapter may take. A lookup that takes longer
+/// counts as no adapter, so that commands without a deadline do not wait
+/// for good.
+const LOOKUP_LIMIT: Duration = Duration::from_secs(5);
+
 /// The default adapter and its lookup.
 #[derive(Default)]
 pub(super) struct AdapterSlot {
     /// The adapter of the last lookup, when it found one. A new lookup
     /// replaces it.
     loaded: Option<LoadedAdapter>,
-    /// The commands that wait for a lookup that runs.
-    waiting: Option<Vec<Job>>,
+    lookup: Option<Lookup>,
+}
+
+/// A lookup of the default adapter that runs.
+struct Lookup {
+    /// Tells its results from those of a lookup that timed out.
+    generation: u64,
+    /// The commands that wait for it.
+    waiters: Vec<Job>,
+    timer: AbortHandle,
 }
 
 struct LoadedAdapter {
@@ -74,8 +88,8 @@ impl Engine {
             }
             then(engine, key);
         });
-        if let Some(waiters) = &mut self.adapter.waiting {
-            waiters.push(job);
+        if let Some(lookup) = &mut self.adapter.lookup {
+            lookup.waiters.push(job);
             return;
         }
         if self.adapter_state() == AdapterState::PoweredOn {
@@ -83,8 +97,7 @@ impl Engine {
             job(self);
             return;
         }
-        self.adapter.waiting = Some(vec![job]);
-        self.load_adapter();
+        self.look_up_adapter(job);
     }
 
     /// The rejection for a command that needs the adapter on, or `None` when it is on.
@@ -109,20 +122,35 @@ impl Engine {
         self.adapter.loaded.as_ref().map(|loaded| loaded.facts)
     }
 
-    fn load_adapter(&mut self) {
+    fn look_up_adapter(&mut self, job: Job) {
         let generation = self.token();
+        let timer = self.after(LOOKUP_LIMIT, move |engine| {
+            engine.adapter_loaded(generation, None);
+        });
+        self.adapter.lookup = Some(Lookup {
+            generation,
+            waiters: vec![job],
+            timer,
+        });
         match BluetoothAdapter::GetDefaultAsync() {
             Ok(operation) => self.spawn(operation.into_future(), move |engine, adapter| {
                 engine.adapter_found(generation, adapter);
             }),
-            Err(_) => self.adapter_loaded(None),
+            Err(_) => self.adapter_loaded(generation, None),
         }
+    }
+
+    fn lookup_generation(&self) -> Option<u64> {
+        self.adapter.lookup.as_ref().map(|lookup| lookup.generation)
     }
 
     /// `GetDefaultAsync` gives a null adapter when the computer has none.
     fn adapter_found(&mut self, generation: u64, adapter: windows::core::Result<BluetoothAdapter>) {
+        if self.lookup_generation() != Some(generation) {
+            return;
+        }
         let Ok(adapter) = adapter else {
-            self.adapter_loaded(None);
+            self.adapter_loaded(generation, None);
             return;
         };
         let facts = AdapterFacts {
@@ -140,12 +168,15 @@ impl Engine {
         };
         match loaded.adapter.GetRadioAsync() {
             Ok(operation) => self.spawn(operation.into_future(), move |engine, radio| {
+                if engine.lookup_generation() != Some(generation) {
+                    return;
+                }
                 let radio = radio
                     .ok()
                     .and_then(|radio| engine.watch_radio(radio, generation));
-                engine.adapter_loaded(Some(LoadedAdapter { radio, ..loaded }));
+                engine.adapter_loaded(generation, Some(LoadedAdapter { radio, ..loaded }));
             }),
-            Err(_) => self.adapter_loaded(Some(loaded)),
+            Err(_) => self.adapter_loaded(generation, Some(loaded)),
         }
     }
 
@@ -165,15 +196,26 @@ impl Engine {
         Some(WatchedRadio { radio, token })
     }
 
-    /// Replaces the adapter of the last lookup, announces a changed state,
-    /// then runs the commands that waited.
-    fn adapter_loaded(&mut self, loaded: Option<LoadedAdapter>) {
+    /// Ends lookup `generation`: its adapter replaces the one of the last
+    /// lookup, a changed state is announced, then the commands that waited
+    /// run. A result of a lookup that already ended is released.
+    fn adapter_loaded(&mut self, generation: u64, loaded: Option<LoadedAdapter>) {
+        let Some(lookup) = self
+            .adapter
+            .lookup
+            .take_if(|lookup| lookup.generation == generation)
+        else {
+            if let Some(loaded) = loaded {
+                loaded.release();
+            }
+            return;
+        };
+        lookup.timer.abort();
         if let Some(previous) = std::mem::replace(&mut self.adapter.loaded, loaded) {
             previous.release();
         }
-        let waiters = self.adapter.waiting.take().unwrap_or_default();
         self.announce(self.adapter_state());
-        for waiter in waiters {
+        for waiter in lookup.waiters {
             waiter(self);
         }
     }
