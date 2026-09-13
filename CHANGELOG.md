@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.2 - 2026-09-13
+
+This prerelease brings the radio to macOS and Windows, so that a desktop app
+can test them. Both backends pass their unit tests and CI, but neither has run
+on radio hardware yet.
+
 - Added the macOS backend. It is the Swift engine of iOS, which `build.rs`
   compiles for macOS and Rust calls through a C ABI. A Mac app needs
   `NSBluetoothAlwaysUsageDescription` in `src-tauri/Info.plist`.
