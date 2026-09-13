@@ -101,8 +101,11 @@ verified on hardware yet.
   stays unanswered 2 s past its deadline is given up, and the next one goes.
 - `SubscribedClientsChanged` is diffed into `subscriptionChanged`, with
   `maxValueLength = min(MaxNotificationSize, 512)`, and again when
-  `MaxNotificationSizeChanged` fires. A central keeps its `central-<n>` for the
-  process, keyed by the device ID of its session.
+  `MaxNotificationSizeChanged` fires. A list that cannot be read changes
+  nothing, and while a client's session cannot be read, no known subscriber
+  counts as gone. When Windows lists a known subscriber with a new client
+  object, notifications go through the new one. A central keeps its
+  `central-<n>` for the process, keyed by the device ID of its session.
 - Platform errors keep a native code: `bluetoothError<n>`,
   `gattCommunicationStatus<n>`, `gattProtocolError<n>` or `hresult0x<hex>`,
   also when they map to a contract code.

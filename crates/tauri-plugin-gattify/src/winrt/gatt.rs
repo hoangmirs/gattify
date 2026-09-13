@@ -189,14 +189,18 @@ pub(super) enum SubscriberChange {
     Unsubscribed(String),
 }
 
-/// Diffs two subscriber lists, each a remote device ID with its notification length.
+/// Diffs two subscriber lists, each a remote device ID with its
+/// notification length. When a client in `after` could not be identified
+/// (`unidentified`), a subscriber missing from it may be that client, so it
+/// stays.
 pub(super) fn subscriber_changes(
     before: &BTreeMap<String, u32>,
     after: &BTreeMap<String, u32>,
+    unidentified: bool,
 ) -> Vec<SubscriberChange> {
     let gone = before
         .keys()
-        .filter(|device| !after.contains_key(*device))
+        .filter(|device| !unidentified && !after.contains_key(*device))
         .map(|device| SubscriberChange::Unsubscribed(device.clone()));
     let present = after
         .iter()
@@ -350,13 +354,30 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(
-            subscriber_changes(&before, &after),
+            subscriber_changes(&before, &after, false),
             vec![
                 SubscriberChange::Unsubscribed("a".into()),
                 SubscriberChange::Resized("b".into(), 182),
                 SubscriberChange::Subscribed("c".into(), 20),
             ]
         );
-        assert!(subscriber_changes(&after, &after).is_empty());
+        assert!(subscriber_changes(&after, &after, false).is_empty());
+    }
+
+    #[test]
+    fn a_subscriber_stays_while_a_client_cannot_be_identified() {
+        let before: BTreeMap<String, u32> = [("a".to_owned(), 20), ("b".to_owned(), 20)]
+            .into_iter()
+            .collect();
+        let after: BTreeMap<String, u32> = [("b".to_owned(), 182), ("c".to_owned(), 20)]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            subscriber_changes(&before, &after, true),
+            vec![
+                SubscriberChange::Resized("b".into(), 182),
+                SubscriberChange::Subscribed("c".into(), 20),
+            ]
+        );
     }
 }

@@ -1431,20 +1431,26 @@ impl Engine {
 
     /// Diffs the subscribed clients of a characteristic with the known ones,
     /// and reports each change with the notification size of its central.
+    /// A failed lookup changes nothing, and a client whose session cannot
+    /// be read keeps the known subscribers.
     fn subscribers_changed(&mut self, server_id: &ServerId, characteristic_key: &str) {
         let Some(attribute) = self.live_attribute(server_id, characteristic_key) else {
             return;
         };
-        let clients = attribute
+        let Some(clients) = attribute
             .characteristic
             .as_ref()
             .and_then(|characteristic| characteristic.SubscribedClients().ok())
             .and_then(|clients| items(&clients).ok())
-            .unwrap_or_default();
+        else {
+            return;
+        };
         let mut after = BTreeMap::new();
         let mut objects = HashMap::new();
+        let mut unidentified = false;
         for client in clients {
             let Some(device) = session_device(client.Session()) else {
+                unidentified = true;
                 continue;
             };
             let length = notification_length(client.MaxNotificationSize().unwrap_or(20));
@@ -1456,7 +1462,7 @@ impl Engine {
             .iter()
             .map(|(device, subscriber)| (device.clone(), subscriber.length))
             .collect();
-        for change in subscriber_changes(&before, &after) {
+        for change in subscriber_changes(&before, &after, unidentified) {
             match change {
                 SubscriberChange::Unsubscribed(device) => {
                     self.unsubscribed(
@@ -1490,6 +1496,62 @@ impl Engine {
                 }
             }
         }
+        for (device, client) in objects {
+            self.replace_client(server_id, characteristic_key, &device, client);
+        }
+    }
+
+    /// Windows can list a known subscriber with a new client object: the
+    /// backend notifies through the latest one, and follows its size.
+    fn replace_client(
+        &mut self,
+        server_id: &ServerId,
+        characteristic_key: &str,
+        device: &str,
+        client: GattSubscribedClient,
+    ) {
+        let differs = self
+            .servers
+            .get(server_id)
+            .and_then(|server| server.characteristics.get(characteristic_key))
+            .and_then(|attribute| attribute.subscribers.get(device))
+            .is_some_and(|subscriber| subscriber.client != client);
+        if !differs {
+            return;
+        }
+        let size_token = self.watch_size(server_id, characteristic_key, &client);
+        if let Some(subscriber) = self
+            .servers
+            .get_mut(server_id)
+            .and_then(|server| server.characteristics.get_mut(characteristic_key))
+            .and_then(|attribute| attribute.subscribers.get_mut(device))
+        {
+            if let Some(token) = subscriber.size_token.take() {
+                let _ = subscriber.client.RemoveMaxNotificationSizeChanged(token);
+            }
+            subscriber.client = client;
+            subscriber.size_token = size_token;
+        }
+    }
+
+    /// Diffs the subscribers again when the notification size of `client` changes.
+    fn watch_size(
+        &self,
+        server_id: &ServerId,
+        characteristic_key: &str,
+        client: &GattSubscribedClient,
+    ) -> Option<i64> {
+        let (poster, id, key) = (
+            self.poster.clone(),
+            server_id.clone(),
+            characteristic_key.to_owned(),
+        );
+        client
+            .MaxNotificationSizeChanged(&handler::<GattSubscribedClient, IInspectable>(move |_| {
+                let (id, key) = (id.clone(), key.clone());
+                poster.post(move |engine| engine.subscribers_changed(&id, &key));
+            }))
+            .ok()
     }
 
     fn subscribed(
@@ -1501,17 +1563,7 @@ impl Engine {
         length: u32,
     ) {
         let central = self.central_id(&device);
-        let (poster, id, key) = (
-            self.poster.clone(),
-            server_id.clone(),
-            characteristic_key.to_owned(),
-        );
-        let size_token = client
-            .MaxNotificationSizeChanged(&handler::<GattSubscribedClient, IInspectable>(move |_| {
-                let (id, key) = (id.clone(), key.clone());
-                poster.post(move |engine| engine.subscribers_changed(&id, &key));
-            }))
-            .ok();
+        let size_token = self.watch_size(server_id, characteristic_key, &client);
         if let Some(attribute) = self
             .servers
             .get_mut(server_id)
