@@ -55,13 +55,17 @@ Updated: 13 September 2026
 - ChatGPT (Codex) reviewed the contract, the Rust driver and wiring, the iOS
   backend and the Android backend. Every finding was checked; the valid ones
   are fixed.
+- Three separate reviews covered the Windows backend: the central role, the
+  peripheral role, and the engine, adapter and scanner. Every finding was
+  checked against the code. The valid ones are fixed. Those that only a
+  Windows run can settle are listed in `docs/platforms/windows.md`.
 
 ## Tests actually run
 
-- cargo test --workspace --all-features on macOS: 140 tests passed, including
-  6 that reach the Swift engine through the C ABI and 49 for the Windows
+- cargo test --workspace --all-features on macOS: 155 tests passed, including
+  6 that reach the Swift engine through the C ABI and 64 for the Windows
   backend's platform-neutral rules.
-- cargo test --workspace --no-default-features: 130 tests passed.
+- cargo test --workspace --no-default-features: 145 tests passed.
 - cargo clippy --workspace --all-targets --all-features -- -D warnings: clean,
   also for aarch64-apple-ios, aarch64-linux-android and x86_64-pc-windows-msvc,
   and for x86_64-pc-windows-msvc without default features.
