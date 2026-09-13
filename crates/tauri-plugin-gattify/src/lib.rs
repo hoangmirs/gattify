@@ -1,8 +1,8 @@
 //! Entry point of the gattify Tauri plugin.
 //!
-//! Platform adapters are capability-gated. Operations with no verified backend
-//! return Unsupported; the deterministic mock is available only through the
-//! explicit mock feature and is never selected by init.
+//! Android, iOS, macOS and Windows have radio backends. On other targets, radio
+//! operations return Unsupported; the deterministic mock is available only
+//! through the explicit mock feature and is never selected by init.
 
 mod backend;
 #[cfg(feature = "tauri")]
@@ -12,16 +12,28 @@ mod error;
 mod events;
 #[cfg(any(test, feature = "tauri"))]
 mod gate;
+#[cfg(all(feature = "tauri", target_os = "macos"))]
+mod macos;
 mod manager;
-#[cfg(any(test, target_os = "android", target_os = "ios"))]
+#[cfg(all(feature = "tauri", any(target_os = "android", target_os = "ios")))]
 mod mobile;
 #[cfg(any(test, feature = "mock"))]
 mod mock;
 mod model;
+#[cfg(any(
+    test,
+    all(
+        feature = "tauri",
+        any(target_os = "android", target_os = "ios", target_os = "macos")
+    )
+))]
+mod native;
 pub mod peer;
 mod scope;
 mod system;
 mod uuid;
+#[cfg(any(test, all(feature = "tauri", target_os = "windows")))]
+mod winrt;
 
 use std::sync::Arc;
 

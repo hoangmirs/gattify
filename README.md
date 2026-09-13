@@ -6,15 +6,16 @@ complete-message transport.
 This repository is an implementation-in-progress. The platform-neutral
 contracts, the deterministic mock backend, the TypeScript facade, the peer wire
 protocol and the peer driver are implemented and tested. The Kotlin backend on
-Android and the Swift backend on iOS implement every command and event of
-`docs/native-bridge.md`. Desktop builds keep an explicit Unsupported backend.
-IMPLEMENTATION_STATUS.md records which radio behavior has run on hardware.
+Android, the Swift backend on iOS and macOS, and the Rust backend on Windows
+implement every command and event of `docs/native-bridge.md`. Linux keeps an
+explicit Unsupported backend. IMPLEMENTATION_STATUS.md records which radio
+behavior has run on hardware.
 
 ## Packages
 
 | Package | Status | Purpose |
 | --- | --- | --- |
-| tauri-plugin-gattify | Implemented; Android and iOS backends await full hardware qualification | Rust crate: DTOs, errors, ownership, scope, backend contract, mock, peer protocol and driver, Tauri commands |
+| tauri-plugin-gattify | Implemented; the Android, iOS, macOS and Windows backends await full hardware qualification | Rust crate: DTOs, errors, ownership, scope, backend contract, mock, peer protocol and driver, Tauri commands |
 | tauri-plugin-gattify-api | Implemented and tested | Framework-neutral TypeScript handles |
 
 The npm package stays private until the first release.
@@ -30,6 +31,9 @@ Requirements: Node 22+, npm 11+, Rust 1.89, and platform SDKs for native builds.
     cargo test --workspace --all-features
     cargo clippy --workspace --all-targets --all-features -- -D warnings
     cargo test --manifest-path examples/gattify-lab/src-tauri/Cargo.toml
+
+On a Mac, `crates/tauri-plugin-gattify/macos/test.sh` also runs the Swift
+engine tests on macOS.
 
 A consumer registers the Rust plugin:
 
@@ -50,7 +54,7 @@ The frontend owns a session and closes it explicitly:
     await scan.stop();
     await ble.close();
 
-Two phones exchange complete messages through a peer endpoint. The host
+Two devices exchange complete messages through a peer endpoint. The host
 listens; the joiner dials a device from its scan:
 
     import { createEndpoint } from "tauri-plugin-gattify-api/peer";
@@ -89,15 +93,18 @@ webview of the app cannot observe them. A page reload releases every scan,
 connection, server and peer of the old page.
 
 On iOS the app needs `NSBluetoothAlwaysUsageDescription`; with Tauri, put it in
-`src-tauri/Info.ios.plist`. On Android the plugin manifest merges the Bluetooth
-permissions; a host needs both the connect and the advertise permission.
+`src-tauri/Info.ios.plist`. macOS needs the same key in `src-tauri/Info.plist`,
+and a sandboxed Mac app also needs the `com.apple.security.device.bluetooth`
+entitlement. On Android the plugin manifest merges the Bluetooth permissions; a
+host needs both the connect and the advertise permission. See
+`docs/platforms/` for each platform's requirements and limits.
 
 `scan` and `connect` forward a caller's `AbortSignal` to an owner-scoped native
 cancellation command using the same operation ID. A backend may be unable to
 interrupt an OS procedure immediately; late completions must still be ignored
 and cleaned up by that backend.
 
-The lab app in examples/gattify-lab is the two-phone test harness: adapter
+The lab app in examples/gattify-lab is the two-device test harness: adapter
 state and permissions, host, scan and join, chat with the time from send to
 ACK, and a log. See its README for the build steps.
 

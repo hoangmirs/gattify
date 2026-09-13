@@ -20,7 +20,9 @@ thiserror = "=2.0.20"
 tokio = { version = "=1.53.1", default-features = false }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Deny rather than forbid: the macOS bridge calls its Swift engine through a C ABI, and only
+# those calls carry `#[allow(unsafe_code)]`.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = "warn"

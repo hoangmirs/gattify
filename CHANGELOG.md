@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added the macOS backend. It is the Swift engine of iOS, which `build.rs`
+  compiles for macOS and Rust calls through a C ABI. A Mac app needs
+  `NSBluetoothAlwaysUsageDescription` in `src-tauri/Info.plist`.
+- Added the Windows backend in Rust on the WinRT Bluetooth APIs. Windows
+  cannot advertise a chosen local name, so a host's name travels as service
+  data, as on Android.
+- Linux still returns `Unsupported` for every radio command.
+- The workspace lint `unsafe_code` is `deny` instead of `forbid`: only the C
+  ABI calls of the macOS backend allow unsafe code.
+- CI builds and tests the plugin on macOS and on Windows.
+
+Not verified on hardware: any radio behavior of the macOS and Windows backends.
+
 ## 0.1.0-alpha.1 - 2026-09-12
 
 This prerelease puts the radio to work on Android and iOS. An iPhone hosted a

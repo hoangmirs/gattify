@@ -468,7 +468,22 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 api.register_ios_plugin(init_plugin_gattify)?,
                 sink,
             );
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            #[cfg(target_os = "macos")]
+            let backend = {
+                let _ = api;
+                crate::macos::MacosBackend::new(sink)
+            };
+            #[cfg(target_os = "windows")]
+            let backend = {
+                let _ = api;
+                crate::winrt::WindowsBackend::new(sink)
+            };
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "ios",
+                target_os = "macos",
+                target_os = "windows"
+            )))]
             let backend = {
                 let _ = (api, sink);
                 crate::SystemBackend

@@ -10,7 +10,14 @@ links = "tauri-plugin-gattify"
 
 [features]
 default = ["tauri"]
-tauri = ["dep:tauri", "dep:tauri-plugin"]
+# The Windows backend runs only inside the plugin, so its WinRT crates come with it.
+tauri = [
+    "dep:tauri",
+    "dep:tauri-plugin",
+    "dep:windows",
+    "dep:windows-collections",
+    "dep:windows-future",
+]
 mock = []
 
 [dependencies]
@@ -26,7 +33,22 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri = { workspace = true, optional = true, features = ["wry"] }
 
+# The versions Tauri already uses on Windows.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.61.3", optional = true, features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Radios",
+    "Foundation",
+    "Storage_Streams",
+] }
+windows-collections = { version = "=0.2.0", optional = true }
+# Its std feature makes WinRT async operations awaitable.
+windows-future = { version = "=0.2.1", optional = true }
+
 [build-dependencies]
+serde_json.workspace = true
 tauri-plugin = { version = "=2.6.3", features = ["build"], optional = true }
 
 [dev-dependencies]

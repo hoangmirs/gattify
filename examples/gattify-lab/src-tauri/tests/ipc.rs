@@ -6,12 +6,20 @@ use tauri::{
     App, Manager, WebviewWindowBuilder,
 };
 
+/// The origin Tauri serves the app from, which the ACL treats as local. WebView2
+/// cannot load a custom scheme, so Windows uses `http://tauri.localhost`.
+const APP_URL: &str = if cfg!(windows) {
+    "http://tauri.localhost"
+} else {
+    "tauri://localhost"
+};
+
 fn request(cmd: &str) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.into(),
         callback: CallbackFn(0),
         error: CallbackFn(1),
-        url: "tauri://localhost".parse().unwrap(),
+        url: APP_URL.parse().unwrap(),
         body: InvokeBody::default(),
         headers: Default::default(),
         invoke_key: INVOKE_KEY.to_string(),
@@ -31,8 +39,13 @@ fn build_app() -> App<MockRuntime> {
         .expect("failed to build the lab app")
 }
 
+/// macOS and Windows run a real radio backend, so a test must not start radio work there: it
+/// would show the Bluetooth prompt or depend on the adapter of the machine. Linux keeps the
+/// backend that answers Unsupported.
+const RADIO_BACKEND: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+
 #[test]
-fn get_state_answers_unknown() {
+fn get_state_answers_a_state() {
     let app = build_app();
     let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
@@ -42,11 +55,14 @@ fn get_state_answers_unknown() {
         .expect("get_state should pass the ACL")
         .deserialize::<serde_json::Value>()
         .unwrap();
-    assert_eq!(state, json!({"kind": "state", "payload": "unknown"}));
+    assert_eq!(state["kind"], "state");
+    if !RADIO_BACKEND {
+        assert_eq!(state["payload"], "unknown");
+    }
 }
 
 #[test]
-fn get_capabilities_answers_unknown_central_support() {
+fn get_capabilities_answers_every_field() {
     let app = build_app();
     let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
@@ -57,7 +73,13 @@ fn get_capabilities_answers_unknown_central_support() {
         .deserialize::<serde_json::Value>()
         .unwrap();
     assert_eq!(capabilities["kind"], "capabilities");
-    assert_eq!(capabilities["payload"]["central"]["level"], "unknown");
+    assert_eq!(
+        capabilities["payload"]["background"]["reason"],
+        "foregroundOnlyContract"
+    );
+    if !RADIO_BACKEND {
+        assert_eq!(capabilities["payload"]["central"]["level"], "unknown");
+    }
 }
 
 #[test]
@@ -163,6 +185,9 @@ fn a_scan_must_stay_inside_the_scope() {
     .expect_err("a scan for a service outside the scope is refused");
     assert_eq!(foreign["code"], "permissionDenied");
 
+    if RADIO_BACKEND {
+        return;
+    }
     let scoped = get_ipc_response(
         &webview,
         request_with_body(
@@ -170,7 +195,7 @@ fn a_scan_must_stay_inside_the_scope() {
             scan_body("op-3", json!([LAB_SERVICE])),
         ),
     )
-    .expect_err("a scoped scan passes the scope and reaches the desktop backend");
+    .expect_err("a scoped scan passes the scope and reaches the Linux backend");
     assert_eq!(scoped["code"], "unsupported");
 }
 
@@ -228,6 +253,9 @@ fn a_joiner_endpoint_needs_no_radio_until_it_dials() {
     .unwrap();
     let endpoint_id = endpoint["endpointId"].as_str().unwrap().to_owned();
 
+    if RADIO_BACKEND {
+        return;
+    }
     let dial = get_ipc_response(
         &webview,
         request_with_body(
@@ -235,7 +263,7 @@ fn a_joiner_endpoint_needs_no_radio_until_it_dials() {
             json!({ "endpointId": endpoint_id, "deviceId": "device-1" }),
         ),
     )
-    .expect_err("the desktop backend cannot connect");
+    .expect_err("the Linux backend cannot connect");
     assert_eq!(dial["code"], "unsupported");
 
     let host = get_ipc_response(
@@ -245,7 +273,7 @@ fn a_joiner_endpoint_needs_no_radio_until_it_dials() {
             json!({ "options": { "serviceUuid": LAB_SERVICE, "listen": true } }),
         ),
     )
-    .expect_err("the desktop backend cannot host a server");
+    .expect_err("the Linux backend cannot host a server");
     assert_eq!(host["code"], "unsupported");
 }
 
