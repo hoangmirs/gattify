@@ -49,6 +49,8 @@ const LINK_LIMIT_WAIT: Duration = Duration::from_secs(1);
 const DISCONNECT_WAIT: Duration = Duration::from_secs(2);
 /// The deadline of a GATT procedure that no operation waits for.
 const PROCEDURE_DEADLINE: Duration = Duration::from_secs(5);
+/// How many values a subscription holds before its subscribe resolves.
+const EARLY_VALUES: usize = 256;
 
 /// The connection bookkeeping of one remote device.
 #[derive(Default)]
@@ -88,6 +90,8 @@ struct Subscription {
     characteristic: GattCharacteristic,
     value_token: Option<i64>,
     phase: SubscriptionPhase,
+    /// Values that arrived before the subscribe resolved, emitted right after.
+    early: Vec<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -331,6 +335,7 @@ impl Engine {
                 characteristic,
                 value_token: None,
                 phase: SubscriptionPhase::Enabling,
+                early: Vec::new(),
             },
         );
         self.enqueue(connection_id, key, Call::Subscribe(handle.to_owned(), mode));
@@ -976,7 +981,9 @@ impl Engine {
     }
 
     /// Registers the value handler of a reserved subscription before its
-    /// descriptor write, so that no early value is lost.
+    /// descriptor write, so that no early value is lost. The handler names
+    /// its subscription, so that a late value of an ended one never reaches
+    /// a newer subscription of the same characteristic.
     fn listen(
         &mut self,
         connection_id: &ConnectionId,
@@ -988,7 +995,11 @@ impl Engine {
             .and_then(|link| link.subscriptions.get_mut(handle))
             .ok_or_else(|| disconnected("the subscription ended"))?;
         let poster = self.poster.clone();
-        let (id, key) = (connection_id.clone(), handle.to_owned());
+        let (id, key, subscription_id) = (
+            connection_id.clone(),
+            handle.to_owned(),
+            subscription.id.clone(),
+        );
         let token = subscription
             .characteristic
             .ValueChanged(&handler::<GattCharacteristic, GattValueChangedEventArgs>(
@@ -999,8 +1010,11 @@ impl Engine {
                     else {
                         return;
                     };
-                    let (id, key) = (id.clone(), key.clone());
-                    poster.post(move |engine| engine.characteristic_changed(&id, &key, value));
+                    let (id, key, subscription_id) =
+                        (id.clone(), key.clone(), subscription_id.clone());
+                    poster.post(move |engine| {
+                        engine.characteristic_changed(&id, &key, &subscription_id, value);
+                    });
                 },
             ))
             .map_err(|error| winrt_error(&error, "the subscribe"))?;
@@ -1115,15 +1129,30 @@ impl Engine {
         };
         subscription.phase = SubscriptionPhase::Active;
         let subscription_id = subscription.id.clone();
+        let early = std::mem::take(&mut subscription.early);
         self.subscriptions.insert(
             subscription_id.clone(),
             SubscriptionRef {
-                owner,
+                owner: owner.clone(),
                 connection_id: connection_id.clone(),
                 handle: handle.to_owned(),
             },
         );
-        self.resolve(key, Reply::SubscriptionStarted { subscription_id });
+        self.resolve(
+            key,
+            Reply::SubscriptionStarted {
+                subscription_id: subscription_id.clone(),
+            },
+        );
+        for value in early {
+            self.emit(
+                &owner,
+                Event::CharacteristicValue {
+                    subscription_id: subscription_id.clone(),
+                    value_base64: BASE64.encode(value),
+                },
+            );
+        }
     }
 
     /// A failed unsubscribe keeps the subscription: the peripheral may still notify.
@@ -1291,33 +1320,47 @@ impl Engine {
         instances
     }
 
+    /// A value of subscription `subscription_id`. While its subscribe runs,
+    /// the value waits for the reply; while an unsubscribe runs, it is dropped.
     fn characteristic_changed(
         &mut self,
         connection_id: &ConnectionId,
         handle: &str,
+        subscription_id: &SubscriptionId,
         value: Vec<u8>,
     ) {
         let Some(link) = self
             .connections
-            .get(connection_id)
+            .get_mut(connection_id)
             .filter(|link| link.phase == Phase::Connected)
         else {
             return;
         };
         let Some(subscription) = link
             .subscriptions
-            .get(handle)
-            .filter(|subscription| subscription.phase == SubscriptionPhase::Active)
+            .get_mut(handle)
+            .filter(|subscription| &subscription.id == subscription_id)
         else {
             return;
         };
-        self.emit(
-            &link.owner,
-            Event::CharacteristicValue {
-                subscription_id: subscription.id.clone(),
-                value_base64: BASE64.encode(value),
-            },
-        );
+        match subscription.phase {
+            SubscriptionPhase::Enabling => {
+                if subscription.early.len() < EARLY_VALUES {
+                    subscription.early.push(value);
+                }
+            }
+            SubscriptionPhase::Active => {
+                let owner = link.owner.clone();
+                self.emit(
+                    &owner,
+                    Event::CharacteristicValue {
+                        subscription_id: subscription_id.clone(),
+                        value_base64: BASE64.encode(value),
+                    },
+                );
+            }
+            SubscriptionPhase::Disabling => {}
+        }
     }
 }
 

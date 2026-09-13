@@ -84,7 +84,9 @@ verified on hardware yet.
   so that it cannot keep the link open. A characteristic handle is keyed by its ATT
   handle and UUID, so a second discovery returns the same handle.
 - A read does not conflict with a subscription: Windows reports values
-  through `ValueChanged` apart from reads.
+  through `ValueChanged` apart from reads. The value handler is registered
+  before the descriptor write, and up to 256 values that arrive before the
+  subscribe resolves are emitted right after its reply.
 - `createServer` creates one `GattServiceProvider` per service and each
   characteristic with plain protection and no static value, so every read
   reaches the backend. `busy` rejects a service UUID that another live server
