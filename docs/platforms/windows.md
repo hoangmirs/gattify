@@ -36,15 +36,15 @@ verified on hardware yet.
   `BluetoothAdapter.GetDefaultAsync` when none is known yet, and again while
   the known one is not on, so that a replaced adapter or a reinstalled driver
   counts. A new adapter replaces the old one and its radio handler. A lookup
-  that takes longer than 5 s counts as no adapter. No adapter, or one
-  without LE, is `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
-  `Disabled` (a hardware switch or the firmware) are `poweredOff`, anything
-  else is `unknown`. `Radio.StateChanged` drives `adapterStateChanged` and the
-  sequence of the contract when Bluetooth turns off. The handler reads the
-  state on the thread of the event, and the engine handles each change in
-  that order, so a quick off and on both count. A watcher that stops on its
-  own reads the radio first, so `adapterStateChanged` comes before its
-  `scanStopped`.
+  that takes longer than 5 s counts as no adapter. No adapter, or one without
+  LE, is `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`,
+  `Off` and `Disabled` (a hardware switch or the firmware) are `poweredOff`,
+  anything else is `unknown`. `Radio.StateChanged` drives
+  `adapterStateChanged` and the sequence of the contract when Bluetooth turns
+  off. The handler reads the state on the thread of the event, and the engine
+  handles each change in that order, so a quick off and on both count. A
+  watcher that stops on its own reads the radio first, so
+  `adapterStateChanged` comes before its `scanStopped`.
 - Windows gives no radio object to a process whose architecture differs from
   the system's, such as an x64 build under emulation on Windows on ARM. An LE
   adapter without a radio then counts as `poweredOn`, and a command fails with
@@ -57,12 +57,13 @@ verified on hardware yet.
   manifest. A call that Windows denies rejects with `permissionDenied`.
 - One `BluetoothLEAdvertisementWatcher` in active mode runs while any scan
   runs. A watcher that Windows aborts right after `Start` rejects `startScan`
-  with the error its `Stopped` event reported. It has no platform filter: each packet goes to every scan whose filter
-  matches its services, solicited services or service data. Windows reports an
-  advertisement and its scan response as two packets, so the backend keeps the
-  latest of each per device and reports them merged. The packets of a device
-  not heard for 60 s are dropped, and at most 1024 cached names stay. A
-  device ID stays with its Bluetooth address, which never leaves the backend.
+  with the error its `Stopped` event reported. It has no platform filter: each
+  packet goes to every scan whose filter matches its services, solicited
+  services or service data. Windows reports an advertisement and its scan
+  response as two packets, so the backend keeps the latest of each per device
+  and reports them merged. The packets of a device not heard for 60 s are
+  dropped, and at most 1024 cached names stay. A device ID stays with its
+  Bluetooth address, which never leaves the backend.
 - There is no connect call on Windows. `connect` opens the device with
   `FromBluetoothAddressAsync` (with the address type of the last scan result
   when Windows gave one), opens its `GattSession`, and sets
@@ -85,8 +86,8 @@ verified on hardware yet.
   closes, stops before its next request and closes the services it holds,
   so that it cannot keep the link open. Reads and writes use the objects of
   the latest discovery, and a new discovery closes the service objects of
-  older ones that no subscription uses. A characteristic handle is keyed by its ATT
-  handle and UUID, so a second discovery returns the same handle.
+  older ones that no subscription uses. A characteristic handle is keyed by
+  its ATT handle and UUID, so a second discovery returns the same handle.
 - A read does not conflict with a subscription: Windows reports values
   through `ValueChanged` apart from reads. The value handler is registered
   before the descriptor write, and up to 256 values that arrive before the
@@ -101,10 +102,11 @@ verified on hardware yet.
   for its ATT timeout. A write whose request takes longer than 5 s completes
   the same way, without a `serverWrite`, and the writes after it go on. It
   gets no ATT error: whether it wanted a response is known only from the
-  request. `notify` sends with
-  `NotifyValueForSubscribedClientAsync` to the one central and resolves when
-  Windows completes it; one notification per server is outstanding. One that
-  stays unanswered 2 s past its deadline is given up, and the next one goes.
+  request.
+- `notify` sends with `NotifyValueForSubscribedClientAsync` to the one
+  central and resolves when Windows completes it; one notification per
+  server is outstanding. One that stays unanswered 2 s past its deadline is
+  given up, and the next one goes.
 - `SubscribedClientsChanged` is diffed into `subscriptionChanged`, with
   `maxValueLength = min(MaxNotificationSize, MaxPduSize - 3, 512)`, at
   least 20, from the client and its session, and again when
@@ -149,15 +151,16 @@ verified on hardware yet.
   (`IsConnectable` false). A server that never advertises is never visible.
   Only one server of the process advertises at a time, so a second server
   stays invisible while another one advertises, and until it advertises
-  itself. `stopAdvertising` publishes the advertised
-  service again the same way, and new options restart its provider. A
-  provider must stop before it publishes again, so the service leaves the
-  database for a moment and connected centrals may lose it. The backend
-  does not wait for Windows to report that: when a provider stops, each
-  subscriber of its service gets `subscriptionChanged` with
-  `subscribed: false`, and its queued notifications reject with
-  `disconnected`. When the service is published again, the centrals that
-  Windows still lists as subscribed count as subscribed again.
+  itself.
+- `stopAdvertising` publishes the advertised service again without
+  advertising, and new options restart its provider. A provider must stop
+  before it publishes again, so the service leaves the database for a moment
+  and connected centrals may lose it. The backend does not wait for Windows
+  to report that: when a provider stops, each subscriber of its service gets
+  `subscriptionChanged` with `subscribed: false`, and its queued
+  notifications reject with `disconnected`. When the service is published
+  again, the centrals that Windows still lists as subscribed count as
+  subscribed again.
 - A provider takes a new publication only after the previous one ended.
   The backend follows the `AdvertisementStatus` it reads after each start or
   stop, on each `AdvertisementStatusChanged`, and every second while a call
