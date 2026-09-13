@@ -16,19 +16,22 @@ For each change that users can see, add a line under `## Unreleased` in `CHANGEL
 3. It moves the lines under `## Unreleased` in `CHANGELOG.md` to a new heading for the version.
 4. It commits `Release <version>` to `develop` and tags the commit `v<version>`. One push sends the commit and the tag together.
 5. It publishes the npm package and then the crate from the tag, through trusted publishing. GitHub stores no registry token.
-6. It creates a GitHub Release. GitHub generates the notes from the merged pull requests.
+6. It creates a GitHub Release. GitHub generates the notes from the merged pull requests. When a draft release of the version exists, the run publishes that draft instead: the written notes stay on top, the generated notes follow, and the assets of the draft stay.
 
-A release run does not generate an SBOM and does not review licenses. `docs/provenance.md` requires both for a release. Sub-project 5 adds `cargo deny check licenses` to CI.
+CI runs `cargo deny --all-features check licenses bans sources` on every pull request. A release run does not generate an SBOM; attach one to a draft release of the version before the run, as in [Before `0.1.0`](#before-010).
 
 ## Before `0.1.0`
 
 `0.1.0-alpha.0` claims the package names. `0.1.0-alpha.1` ships the Android and iOS backends so that an app can test them. `0.1.0-alpha.2` adds the macOS and Windows backends. All three skip these checks, by the owner's decision on 12 and 13 September 2026. Complete them before `0.1.0`.
 
-- Run `cargo deny check licenses`. Review the licenses of the npm dependencies. Update `THIRD_PARTY_NOTICES.md`.
-- Generate an SPDX or CycloneDX SBOM from `Cargo.lock` and `package-lock.json`, as `docs/provenance.md` requires.
-- Run `cargo package --list -p tauri-plugin-gattify` and `npm pack --dry-run --workspace packages/plugin-gattify`. Check that both lists include the native sources and the license file.
-- Install the packed crate and the packed npm package into a new Tauri app.
+The first four checks passed on 13 September 2026, on `develop` after `0.1.0-alpha.2`. Repeat them when a dependency changes before `0.1.0`.
+
+- Run `cargo deny check licenses`. Review the licenses of the npm dependencies. Update `THIRD_PARTY_NOTICES.md`. Done: CI now runs `cargo deny`, and six crates that Tauri brings in have exceptions in `deny.toml`.
+- Generate an SPDX or CycloneDX SBOM from `Cargo.lock` and `package-lock.json`, as `docs/provenance.md` requires. Done: the draft release `v0.1.0` carries both. Make them again with `cargo cyclonedx --all-features --format json --target all --override-filename tauri-plugin-gattify.cdx` in the repository, and with `npm sbom --sbom-format cyclonedx --package-lock-only --omit dev` in the unpacked npm package after `npm install --package-lock-only`.
+- Run `cargo package --list -p tauri-plugin-gattify` and `npm pack --dry-run --workspace packages/plugin-gattify`. Check that both lists include the native sources and the license file. Done: the published alphas lack `LICENSE`. The crate carries it from `0.1.0` on, and CI compares it with the root `LICENSE`.
+- Install the packed crate and the packed npm package into a new Tauri app. Done on macOS: the app built with no warnings, and its TypeScript checked strictly against the package types.
 - Check that `docs/support-matrix.md` and `CHANGELOG.md` contain no unverified claims.
+- Pass the phone test, and run the lab app on a Mac and on a Windows PC against a phone. Record each run in `docs/platforms/test-results/`.
 
 ## Setup and first releases
 

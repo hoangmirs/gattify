@@ -1,6 +1,16 @@
 [licenses]
 confidence-threshold = 0.93
 allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+# Tauri brings these in, and gattify uses them unmodified. MPL-2.0 covers only
+# the files of those crates; the LLVM exception only relaxes Apache-2.0.
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "cssparser" },
+    { allow = ["MPL-2.0"], crate = "cssparser-macros" },
+    { allow = ["MPL-2.0"], crate = "dtoa-short" },
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+    { allow = ["MPL-2.0"], crate = "selectors" },
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" },
+]
 
 [bans]
 multiple-versions = "warn"
