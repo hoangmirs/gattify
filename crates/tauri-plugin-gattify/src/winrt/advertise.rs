@@ -65,10 +65,14 @@ pub(super) enum Publication {
     Advertised(u64),
 }
 
-/// What a provider reported in `AdvertisementStatusChanged`.
+/// The `AdvertisementStatus` of a provider, from its event or read from it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ProviderStatus {
-    Started { all_data: bool },
+    /// The provider never published.
+    Created,
+    Started {
+        all_data: bool,
+    },
     Stopped,
     Aborted,
     Other,
@@ -101,8 +105,11 @@ enum Phase {
 }
 
 /// Moves one service provider towards the publication it should have. A
-/// provider takes a new publication only after it reported the end of the
-/// previous one, so a change waits for `Started`, then stops, then starts.
+/// provider takes a new publication only after the previous one ended, so a
+/// change waits for the start, then stops, then starts.
+///
+/// It follows the status read from the provider, not the one an event
+/// carries: an event can tell of a change that a read has already seen.
 #[derive(Debug, Default)]
 pub(super) struct Publisher {
     phase: Phase,
@@ -115,10 +122,36 @@ impl Publisher {
         self.step()
     }
 
-    pub(super) fn observe(
+    /// Takes the status read from the provider after a call or an event,
+    /// or `later` by the watchdog. A start can take a moment to show, so
+    /// right after a call a status without a start means nothing. Later, a
+    /// publication without an advertisement counts as started, because
+    /// Windows may never report it, and an advertisement that shows no start
+    /// ends once it is no longer wanted.
+    pub(super) fn check(
         &mut self,
         status: ProviderStatus,
+        later: bool,
     ) -> (Option<Published>, Option<PublishStep>) {
+        // The provider shows no start.
+        let quiet = matches!(status, ProviderStatus::Created | ProviderStatus::Stopped);
+        let status = match self.phase {
+            Phase::Starting(_) if quiet && !later => return (None, None),
+            Phase::Starting(Publication::Discoverable) if quiet => {
+                ProviderStatus::Started { all_data: true }
+            }
+            Phase::Starting(publication) if quiet && self.desired == Some(publication) => {
+                return (None, None);
+            }
+            // It may show no start all along.
+            Phase::Started(Publication::Discoverable) if quiet => return (None, None),
+            _ if quiet => ProviderStatus::Stopped,
+            _ => status,
+        };
+        self.observe(status)
+    }
+
+    fn observe(&mut self, status: ProviderStatus) -> (Option<Published>, Option<PublishStep>) {
         let published = match (self.phase, status) {
             (Phase::Starting(publication), ProviderStatus::Started { all_data }) => {
                 self.phase = Phase::Started(publication);
@@ -146,6 +179,11 @@ impl Publisher {
             _ => None,
         };
         (published, self.step())
+    }
+
+    /// Whether a call waits for the provider to report its outcome.
+    pub(super) fn is_settling(&self) -> bool {
+        matches!(self.phase, Phase::Starting(_) | Phase::Stopping)
     }
 
     /// The provider refused a start at once.
@@ -341,6 +379,143 @@ mod tests {
             publisher.observe(ProviderStatus::Aborted),
             (Some(Published::Ended(Publication::Discoverable)), None)
         );
+    }
+
+    #[test]
+    fn right_after_a_call_only_its_outcome_counts() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Advertised(1)));
+        assert!(publisher.is_settling());
+        // The start can take a moment to show.
+        assert_eq!(
+            publisher.check(ProviderStatus::Created, false),
+            (None, None)
+        );
+        assert_eq!(
+            publisher.check(ProviderStatus::Started { all_data: true }, false),
+            (
+                Some(Published::Started {
+                    publication: Publication::Advertised(1),
+                    all_data: true
+                }),
+                None
+            )
+        );
+        assert!(!publisher.is_settling());
+        assert_eq!(
+            publisher.want(Some(Publication::Discoverable)),
+            Some(PublishStep::Stop)
+        );
+        assert_eq!(
+            publisher.check(ProviderStatus::Started { all_data: true }, false),
+            (None, None)
+        );
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, false),
+            (None, Some(PublishStep::Start(Publication::Discoverable)))
+        );
+    }
+
+    #[test]
+    fn the_late_event_of_a_stop_read_already_does_not_end_the_next_start() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Discoverable));
+        publisher.check(ProviderStatus::Started { all_data: true }, false);
+        publisher.want(Some(Publication::Advertised(2)));
+        let (_, step) = publisher.check(ProviderStatus::Stopped, false);
+        assert_eq!(step, Some(PublishStep::Start(Publication::Advertised(2))));
+        // The event of the stop arrives, and the start does not show yet.
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, false),
+            (None, None)
+        );
+        assert!(publisher.is_settling());
+        let (outcome, _) = publisher.check(ProviderStatus::Started { all_data: true }, false);
+        assert!(matches!(outcome, Some(Published::Started { .. })));
+    }
+
+    #[test]
+    fn a_silent_publication_without_an_advertisement_counts_as_started() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Discoverable));
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, true),
+            (
+                Some(Published::Started {
+                    publication: Publication::Discoverable,
+                    all_data: true
+                }),
+                None
+            )
+        );
+        assert!(!publisher.is_settling());
+        // A status without a start does not end it, an abort does.
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, false),
+            (None, None)
+        );
+        assert_eq!(
+            publisher.check(ProviderStatus::Aborted, false),
+            (Some(Published::Ended(Publication::Discoverable)), None)
+        );
+    }
+
+    #[test]
+    fn the_next_advertisement_is_not_stuck_behind_a_silent_publication() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Discoverable));
+        assert_eq!(publisher.want(Some(Publication::Advertised(2))), None);
+        assert_eq!(
+            publisher.check(ProviderStatus::Created, true).1,
+            Some(PublishStep::Stop)
+        );
+        assert_eq!(
+            publisher.check(ProviderStatus::Created, false),
+            (None, Some(PublishStep::Start(Publication::Advertised(2))))
+        );
+    }
+
+    #[test]
+    fn a_silent_advertisement_waits_while_wanted_and_ends_when_not() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Advertised(1)));
+        assert_eq!(publisher.check(ProviderStatus::Stopped, true), (None, None));
+        assert!(publisher.is_settling());
+        assert_eq!(publisher.want(Some(Publication::Discoverable)), None);
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, true),
+            (
+                Some(Published::Ended(Publication::Advertised(1))),
+                Some(PublishStep::Start(Publication::Discoverable))
+            )
+        );
+    }
+
+    #[test]
+    fn an_advertisement_that_shows_no_start_any_more_has_ended() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Advertised(1)));
+        publisher.check(ProviderStatus::Started { all_data: true }, false);
+        assert_eq!(
+            publisher.check(ProviderStatus::Stopped, false),
+            (Some(Published::Ended(Publication::Advertised(1))), None)
+        );
+    }
+
+    #[test]
+    fn a_stop_that_still_shows_the_start_keeps_waiting() {
+        let mut publisher = Publisher::default();
+        publisher.want(Some(Publication::Discoverable));
+        publisher.check(ProviderStatus::Started { all_data: true }, false);
+        assert_eq!(publisher.want(None), Some(PublishStep::Stop));
+        assert_eq!(
+            publisher.check(ProviderStatus::Started { all_data: true }, true),
+            (None, None)
+        );
+        assert!(publisher.is_settling());
+        assert_eq!(publisher.check(ProviderStatus::Created, true), (None, None));
+        assert!(!publisher.is_settling());
+        assert_eq!(publisher.check(ProviderStatus::Stopped, true), (None, None));
     }
 
     #[test]

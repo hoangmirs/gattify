@@ -125,6 +125,13 @@ verified on hardware yet.
   advertises; its other services are then published without advertising
   (`IsConnectable` false). `stopAdvertising` keeps the advertised service
   published the same way, so connected centrals keep it.
+- A provider takes a new publication only after the previous one ended.
+  The backend follows the `AdvertisementStatus` it reads after each start or
+  stop, on each `AdvertisementStatusChanged`, and every second while a call
+  waits, because Windows may not report a publication without an
+  advertisement. Such a publication that shows no start after a second
+  counts as started. An advertisement that shows none waits until its
+  `startAdvertising` ends. Both are unverified.
 - A service provider publishes primary services only. A service with
   `primary: false` is published as a primary service.
 - Windows raises one `WriteRequested` per write, with an offset and no

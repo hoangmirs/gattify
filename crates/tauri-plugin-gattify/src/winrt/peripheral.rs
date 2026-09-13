@@ -48,6 +48,8 @@ use crate::{
 const NOTIFICATION_GRACE: Duration = Duration::from_secs(2);
 /// The deadline of a notification without one.
 const NOTIFICATION_DEADLINE: Duration = Duration::from_secs(5);
+/// How often the status of a provider is read while a call waits for it.
+const PUBLICATION_CHECK: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ServerState {
@@ -79,6 +81,8 @@ struct LocalService {
     provider: GattServiceProvider,
     status_token: Option<i64>,
     publisher: Publisher,
+    /// Reads the status again while a call waits for it.
+    watchdog: Option<AbortHandle>,
 }
 
 struct LocalAttribute {
@@ -512,10 +516,10 @@ impl Engine {
                 let Some(args) = args else {
                     return;
                 };
-                let status = args.Status().unwrap_or_default();
+                let reported = args.Status().map_or(ProviderStatus::Other, provider_status);
                 let error = args.Error().unwrap_or_default();
                 let id = id.clone();
-                poster.post(move |engine| engine.provider_status(&id, index, status, error));
+                poster.post(move |engine| engine.read_provider(&id, index, false, reported, error));
             }))
             .ok();
         if let Some(server) = self.registering(&server_id) {
@@ -523,6 +527,7 @@ impl Engine {
                 provider,
                 status_token,
                 publisher: Publisher::default(),
+                watchdog: None,
             });
         }
         self.add_characteristic(server_id, key, index, 0);
@@ -888,7 +893,7 @@ impl Engine {
 
     fn apply_step(&mut self, server_id: &ServerId, index: usize, step: Option<PublishStep>) {
         let Some(step) = step else {
-            return;
+            return self.watch_publication(server_id, index);
         };
         let parameters = match step {
             PublishStep::Start(publication) => Some(self.parameters(publication)),
@@ -901,26 +906,79 @@ impl Engine {
         else {
             return;
         };
-        match (step, parameters) {
-            (PublishStep::Stop, _) => {
-                if service.provider.StopAdvertising().is_err() {
-                    let next = service.publisher.stop_failed();
-                    self.apply_step(server_id, index, next);
-                }
+        let called = match parameters {
+            None => service.provider.StopAdvertising(),
+            Some(parameters) => parameters.and_then(|parameters| {
+                service.provider.StartAdvertisingWithParameters(&parameters)
+            }),
+        };
+        match (step, called) {
+            // Windows may not report the outcome, so the status is read now.
+            (_, Ok(())) => self.read_provider(
+                server_id,
+                index,
+                false,
+                ProviderStatus::Other,
+                BluetoothError::Success,
+            ),
+            (PublishStep::Stop, Err(_)) => {
+                let next = service.publisher.stop_failed();
+                self.apply_step(server_id, index, next);
             }
-            (PublishStep::Start(publication), Some(parameters)) => {
-                let started = parameters.and_then(|parameters| {
-                    service.provider.StartAdvertisingWithParameters(&parameters)
-                });
-                if let Err(error) = started {
-                    service.publisher.start_failed();
-                    if let Publication::Advertised(generation) = publication {
-                        self.advertising_ended(generation, &winrt_error(&error, "advertising"));
-                    }
+            (PublishStep::Start(publication), Err(error)) => {
+                service.publisher.start_failed();
+                if let Publication::Advertised(generation) = publication {
+                    self.advertising_ended(generation, &winrt_error(&error, "advertising"));
                 }
+                self.watch_publication(server_id, index);
             }
-            (PublishStep::Start(_), None) => {}
         }
+    }
+
+    /// Reads the status of a provider again every second while a call
+    /// waits for it, because Windows may never report it.
+    fn watch_publication(&mut self, server_id: &ServerId, index: usize) {
+        let Some(service) = self
+            .servers
+            .get_mut(server_id)
+            .and_then(|server| server.services.get_mut(index))
+        else {
+            return;
+        };
+        if let Some(watchdog) = service.watchdog.take() {
+            watchdog.abort();
+        }
+        if !service.publisher.is_settling() {
+            return;
+        }
+        let id = server_id.clone();
+        let watchdog = self.after(PUBLICATION_CHECK, move |engine| {
+            engine.publication_due(&id, index);
+        });
+        if let Some(service) = self
+            .servers
+            .get_mut(server_id)
+            .and_then(|server| server.services.get_mut(index))
+        {
+            service.watchdog = Some(watchdog);
+        }
+    }
+
+    fn publication_due(&mut self, server_id: &ServerId, index: usize) {
+        if let Some(service) = self
+            .servers
+            .get_mut(server_id)
+            .and_then(|server| server.services.get_mut(index))
+        {
+            service.watchdog = None;
+        }
+        self.read_provider(
+            server_id,
+            index,
+            true,
+            ProviderStatus::Other,
+            BluetoothError::Success,
+        );
     }
 
     /// The parameters of a publication. The advertisement carries the local
@@ -949,24 +1007,18 @@ impl Engine {
         Ok(parameters)
     }
 
-    fn provider_status(
+    /// Reads the status of the provider of service `index` and feeds it to
+    /// its publisher, `later` when the watchdog reads it. An event only
+    /// prompts the read: its `reported` status counts when the read fails.
+    /// Then it reports a start or an end, and takes the next step.
+    fn read_provider(
         &mut self,
         server_id: &ServerId,
         index: usize,
-        status: GattServiceProviderAdvertisementStatus,
+        later: bool,
+        reported: ProviderStatus,
         error: BluetoothError,
     ) {
-        let status = match status {
-            GattServiceProviderAdvertisementStatus::Started => {
-                ProviderStatus::Started { all_data: true }
-            }
-            GattServiceProviderAdvertisementStatus::StartedWithoutAllAdvertisementData => {
-                ProviderStatus::Started { all_data: false }
-            }
-            GattServiceProviderAdvertisementStatus::Stopped => ProviderStatus::Stopped,
-            GattServiceProviderAdvertisementStatus::Aborted => ProviderStatus::Aborted,
-            _ => ProviderStatus::Other,
-        };
         let Some(service) = self
             .servers
             .get_mut(server_id)
@@ -974,7 +1026,11 @@ impl Engine {
         else {
             return;
         };
-        let (published, step) = service.publisher.observe(status);
+        let status = service
+            .provider
+            .AdvertisementStatus()
+            .map_or(reported, provider_status);
+        let (published, step) = service.publisher.check(status, later);
         match published {
             Some(Published::Started {
                 publication: Publication::Advertised(generation),
@@ -1462,6 +1518,9 @@ impl Engine {
 /// and every handler is removed.
 fn release(server: &mut Server) {
     for service in server.services.drain(..) {
+        if let Some(watchdog) = service.watchdog {
+            watchdog.abort();
+        }
         let _ = service.provider.StopAdvertising();
         if let Some(token) = service.status_token {
             let _ = service.provider.RemoveAdvertisementStatusChanged(token);
@@ -1485,5 +1544,20 @@ fn release(server: &mut Server) {
                 let _ = subscriber.client.RemoveMaxNotificationSizeChanged(token);
             }
         }
+    }
+}
+
+fn provider_status(status: GattServiceProviderAdvertisementStatus) -> ProviderStatus {
+    match status {
+        GattServiceProviderAdvertisementStatus::Created => ProviderStatus::Created,
+        GattServiceProviderAdvertisementStatus::Started => {
+            ProviderStatus::Started { all_data: true }
+        }
+        GattServiceProviderAdvertisementStatus::StartedWithoutAllAdvertisementData => {
+            ProviderStatus::Started { all_data: false }
+        }
+        GattServiceProviderAdvertisementStatus::Stopped => ProviderStatus::Stopped,
+        GattServiceProviderAdvertisementStatus::Aborted => ProviderStatus::Aborted,
+        _ => ProviderStatus::Other,
     }
 }
