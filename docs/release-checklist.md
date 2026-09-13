@@ -11,7 +11,7 @@ For each change that users can see, add a line under `## Unreleased` in `CHANGEL
 
 ## What a release run does
 
-1. It runs CI on the commit, including the iOS job.
+1. It runs CI on the commit, including the iOS, macOS and Windows jobs.
 2. It increases the version in the crate, the npm package and the three Cargo lockfiles.
 3. It moves the lines under `## Unreleased` in `CHANGELOG.md` to a new heading for the version.
 4. It commits `Release <version>` to `develop` and tags the commit `v<version>`. One push sends the commit and the tag together.
