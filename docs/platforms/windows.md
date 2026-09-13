@@ -128,11 +128,21 @@ verified on hardware yet.
   Windows places that data and reports `StartedWithoutAllAdvertisementData`
   when it does not fit. The start then reports `localNameIncluded: false` and
   `localNameTruncated: true`, or rejects with `payloadTooLarge` when the name
-  is required. Whether the name fits next to a 128-bit UUID is unverified.
+  is required. The budget leaves out the flags and the 128-bit service UUID
+  that the advertisement also carries, and the scan response carries the
+  computer name, so the name likely never fits and
+  `StartedWithoutAllAdvertisementData` may be the normal result. Windows
+  also reports that status when it leaves out other data, and the backend
+  then counts the name as left out as well. Both are unverified. The peer
+  driver passes `localNameOptional: true`, so its advertisement starts
+  either way.
 - A connectable, discoverable provider also advertises the computer name.
   Scanners report it as the local name, and the name rule of the contract
   prefers it, so other platforms see the computer name as `name`. The chosen
-  name stays in `advertisement.serviceData`.
+  name stays in `advertisement.serviceData`. Every publication sets
+  `IsDiscoverable`, also the one without an advertisement after
+  `stopAdvertising`, so Windows may keep advertising the computer name
+  after `stopAdvertising` (unverified).
 - Windows adds a service to its GATT database only while its provider
   publishes. A server's services become discoverable when the server first
   advertises; its other services are then published without advertising
