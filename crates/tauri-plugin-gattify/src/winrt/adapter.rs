@@ -9,7 +9,7 @@ use windows::{
 };
 
 use super::{
-    convert::handler,
+    convert::sender_handler,
     engine::{Engine, Job},
     status::{adapter_state, readiness_error, AdapterFacts, RadioPower},
 };
@@ -130,13 +130,17 @@ impl Engine {
         }
     }
 
-    /// Registers the `StateChanged` handler of a radio. A radio whose handler
-    /// cannot be registered is treated as missing.
+    /// Registers the `StateChanged` handler of a radio. The handler reads the
+    /// state on the thread of the event, so that each change arrives in order
+    /// even when the radio changes again before the engine runs. A radio whose
+    /// handler cannot be registered is treated as missing.
     fn watch_radio(&self, radio: &Radio) -> bool {
         let poster = self.poster.clone();
         radio
-            .StateChanged(&handler::<Radio, IInspectable>(move |_| {
-                poster.post(Engine::radio_changed);
+            .StateChanged(&sender_handler::<Radio, IInspectable>(move |sender| {
+                if let Some(power) = sender.map(radio_power) {
+                    poster.post(move |engine| engine.radio_changed(power));
+                }
             }))
             .is_ok()
     }
@@ -147,9 +151,7 @@ impl Engine {
             AdapterSlot::Loading(waiters) => waiters,
             AdapterSlot::Unloaded | AdapterSlot::Loaded(_) => Vec::new(),
         };
-        if matches!(self.adapter, AdapterSlot::Loaded(_)) {
-            self.last_state = Some(self.adapter_state());
-        }
+        self.announce(self.adapter_state());
         for waiter in waiters {
             waiter(self);
         }
@@ -176,21 +178,36 @@ impl Engine {
             loaded.radio_lookup = false;
             if radio.is_some() {
                 loaded.radio = radio;
-                engine.radio_changed();
+                engine.announce(engine.adapter_state());
             }
         });
     }
 
-    fn radio_changed(&mut self) {
-        if !matches!(self.adapter, AdapterSlot::Loaded(_)) {
+    /// A state that the radio reported, in the order it reported them.
+    fn radio_changed(&mut self, power: RadioPower) {
+        let AdapterSlot::Loaded(loaded) = &self.adapter else {
             return;
-        }
-        let state = self.adapter_state();
-        if self.last_state == Some(state) {
+        };
+        let state = adapter_state(Some(&loaded.facts), Some(power));
+        self.announce(state);
+    }
+
+    /// Reads the radio now and handles a change it missed. A stopped watcher
+    /// calls this first, so that `adapterStateChanged` comes before the end
+    /// of its scans.
+    pub(super) fn recheck_radio(&mut self) {
+        let AdapterSlot::Loaded(loaded) = &self.adapter else {
             return;
+        };
+        if let Some(power) = loaded.radio.as_ref().map(radio_power) {
+            self.radio_changed(power);
         }
-        self.last_state = Some(state);
-        self.adapter_changed(state);
+    }
+
+    fn announce(&mut self, state: AdapterState) {
+        if let Some(state) = self.adapter_states.observe(state) {
+            self.adapter_changed(state);
+        }
     }
 }
 

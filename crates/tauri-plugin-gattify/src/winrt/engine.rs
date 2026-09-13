@@ -19,7 +19,7 @@ use super::{
     queue::InOrder,
     scan::Sightings,
     scanner::{ScanRecord, WatcherRecord},
-    status::{capabilities, deadline_for, permissions, readiness_error},
+    status::{capabilities, deadline_for, permissions, readiness_error, StateTracker},
 };
 use crate::{
     AdapterState, BleError, BleResult, Command, ConnectionId, ErrorCode, Event, EventSink,
@@ -72,7 +72,7 @@ pub(super) struct Engine {
     operations: HashMap<u64, Operation>,
     keys: HashMap<OperationId, u64>,
     pub(super) adapter: AdapterSlot,
-    pub(super) last_state: Option<AdapterState>,
+    pub(super) adapter_states: StateTracker,
     pub(super) devices: Remotes<u64>,
     pub(super) device_links: HashMap<String, DeviceLink>,
     pub(super) sightings: Sightings,
@@ -98,7 +98,7 @@ impl Engine {
             operations: HashMap::new(),
             keys: HashMap::new(),
             adapter: AdapterSlot::Unloaded,
-            last_state: None,
+            adapter_states: StateTracker::default(),
             devices: Remotes::new("device"),
             device_links: HashMap::new(),
             sightings: Sightings::default(),

@@ -37,7 +37,11 @@ verified on hardware yet.
   `unavailable`. `Radio.State` gives the state: `On` is `poweredOn`, `Off` and
   `Disabled` (a hardware switch or the firmware) are `poweredOff`, anything
   else is `unknown`. `Radio.StateChanged` drives `adapterStateChanged` and the
-  sequence of the contract when Bluetooth turns off.
+  sequence of the contract when Bluetooth turns off. The handler reads the
+  state on the thread of the event, and the engine handles each change in
+  that order, so a quick off and on both count. A watcher that stops on its
+  own reads the radio first, so `adapterStateChanged` comes before its
+  `scanStopped`.
 - Windows gives no radio object to a process whose architecture differs from
   the system's, such as an x64 build under emulation on Windows on ARM. An LE
   adapter without a radio then counts as `poweredOn`, and a command fails with

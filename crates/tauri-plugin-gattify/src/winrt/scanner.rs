@@ -192,12 +192,15 @@ impl Engine {
         Ok(())
     }
 
-    /// The watcher stopped on its own, for example after a radio change.
+    /// The watcher stopped on its own, for example after a radio change. The
+    /// radio change can arrive later on another thread, so it is read first:
+    /// `adapterStateChanged` then comes before `scanStopped`, and reaches the
+    /// owners that held only scans.
     fn watcher_stopped(&mut self, generation: u64) {
-        if self.watcher.as_ref().map(|watcher| watcher.generation) != Some(generation) {
-            return;
+        self.recheck_radio();
+        if self.watcher.as_ref().map(|watcher| watcher.generation) == Some(generation) {
+            self.scans_lost();
         }
-        self.scans_lost();
     }
 
     fn advertisement_received(&mut self, generation: u64, received: Received) {

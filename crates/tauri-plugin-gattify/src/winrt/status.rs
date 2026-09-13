@@ -49,6 +49,23 @@ pub(super) fn adapter_state(
     }
 }
 
+/// Follows the adapter state in the order Windows reports it, so that a
+/// quick off and on both count.
+#[derive(Debug, Default)]
+pub(super) struct StateTracker {
+    last: Option<AdapterState>,
+}
+
+impl StateTracker {
+    /// The state to announce, or `None` for the first state and for a repeat.
+    pub(super) fn observe(&mut self, state: AdapterState) -> Option<AdapterState> {
+        self.last
+            .replace(state)
+            .filter(|previous| *previous != state)
+            .map(|_| state)
+    }
+}
+
 /// The rejection for a command that needs the adapter on, or `None` when it is on.
 pub(super) fn readiness_error(state: AdapterState) -> Option<BleError> {
     let (code, message) = match state {
@@ -270,6 +287,25 @@ mod tests {
         assert_eq!(
             adapter_state(Some(&le), Some(RadioPower::Unknown)),
             AdapterState::Unknown
+        );
+    }
+
+    #[test]
+    fn each_change_is_announced_in_order_but_not_the_first_state_or_a_repeat() {
+        let mut states = StateTracker::default();
+        assert_eq!(states.observe(AdapterState::PoweredOn), None);
+        assert_eq!(states.observe(AdapterState::PoweredOn), None);
+        assert_eq!(
+            states.observe(AdapterState::PoweredOff),
+            Some(AdapterState::PoweredOff)
+        );
+        assert_eq!(
+            states.observe(AdapterState::PoweredOn),
+            Some(AdapterState::PoweredOn)
+        );
+        assert_eq!(
+            states.observe(AdapterState::Unavailable),
+            Some(AdapterState::Unavailable)
         );
     }
 

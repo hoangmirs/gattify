@@ -28,6 +28,20 @@ where
     })
 }
 
+/// Like [`handler`], for an event whose sender carries the news.
+pub(super) fn sender_handler<S, A>(
+    mut on_event: impl FnMut(Option<&S>) + Send + 'static,
+) -> TypedEventHandler<S, A>
+where
+    S: RuntimeType + 'static,
+    A: RuntimeType + 'static,
+{
+    TypedEventHandler::new(move |sender: Ref<'_, S>, _: Ref<'_, A>| {
+        on_event(sender.as_ref());
+        Ok(())
+    })
+}
+
 /// The Windows device ID of the remote end of a session. It never leaves the backend.
 pub(super) fn session_device(session: windows::core::Result<GattSession>) -> Option<String> {
     session
