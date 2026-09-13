@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     future::Future,
+    panic::{self, AssertUnwindSafe},
     sync::{atomic::AtomicU64, Arc},
     time::{Duration, Instant},
 };
@@ -116,7 +117,9 @@ impl Engine {
 
     pub(super) async fn run(mut self, mut inbox: mpsc::UnboundedReceiver<Job>) {
         while let Some(job) = inbox.recv().await {
-            job(&mut self);
+            // A job that panics loses its own work, not the engine. An
+            // operation it dropped answers `internal` to its caller.
+            let _ = panic::catch_unwind(AssertUnwindSafe(|| job(&mut self)));
         }
     }
 

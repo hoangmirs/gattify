@@ -44,7 +44,12 @@ impl Backend for WindowsBackend {
         {
             return Err(stopped());
         }
-        answer.await.unwrap_or_else(|_| Err(stopped()))
+        answer.await.unwrap_or_else(|_| {
+            Err(BleError::new(
+                ErrorCode::Internal,
+                "the Windows backend dropped the operation",
+            ))
+        })
     }
 }
 
