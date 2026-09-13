@@ -166,8 +166,9 @@ verified on hardware yet.
   stop, on each `AdvertisementStatusChanged`, and every second while a call
   waits, because Windows may not report a publication without an
   advertisement. Such a publication that shows no start after a second
-  counts as started. An advertisement that shows none waits until its
-  `startAdvertising` ends. Both are unverified.
+  counts as started, and from then on only `Aborted` ends it. An
+  advertisement that shows no start waits until its `startAdvertising`
+  ends. Both are unverified.
 - A service provider publishes primary services only. A service with
   `primary: false` is published as a primary service.
 - Windows raises one `WriteRequested` per write, with an offset and no
