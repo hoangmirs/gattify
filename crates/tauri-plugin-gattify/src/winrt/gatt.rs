@@ -8,6 +8,8 @@ use crate::{
 pub(super) const DEFAULT_ATT_MTU: u16 = 23;
 /// The longest value one attribute holds.
 pub(super) const MAX_ATTRIBUTE_LENGTH: u32 = 512;
+/// The value a PDU of the default ATT MTU carries.
+const MIN_VALUE_LENGTH: u32 = 20;
 
 /// The ATT errors a local server answers with.
 pub(super) mod att {
@@ -60,9 +62,23 @@ pub(super) fn link_limits(mtu: u16) -> LinkLimits {
     }
 }
 
-/// The notification size a server reports for a subscribed client.
-pub(super) fn notification_length(max_notification_size: u16) -> u32 {
-    u32::from(max_notification_size).min(MAX_ATTRIBUTE_LENGTH)
+/// The notification size a server reports for a subscribed client:
+/// `MaxNotificationSize`, which may be the ATT MTU rather than the payload,
+/// capped by the payload of the MTU of its session and by 512, and at
+/// least 20.
+pub(super) fn notification_length(
+    max_notification_size: Option<u16>,
+    max_pdu_size: Option<u16>,
+) -> u32 {
+    let payload = max_pdu_size.map(|mtu| mtu.saturating_sub(3));
+    [max_notification_size, payload]
+        .into_iter()
+        .flatten()
+        .map(u32::from)
+        .min()
+        .map_or(MIN_VALUE_LENGTH, |length| {
+            length.clamp(MIN_VALUE_LENGTH, MAX_ATTRIBUTE_LENGTH)
+        })
 }
 
 pub(super) fn properties_from_bits(bits: u32) -> CharacteristicProperties {
@@ -260,8 +276,17 @@ mod tests {
         assert_eq!(value_length(23), 20);
         assert_eq!(value_length(0), 20);
         assert_eq!(link_limits(525).att_mtu, Some(525));
-        assert_eq!(notification_length(522), 512);
-        assert_eq!(notification_length(20), 20);
+    }
+
+    #[test]
+    fn a_notification_fits_the_payload_of_the_session() {
+        assert_eq!(notification_length(Some(247), Some(247)), 244);
+        assert_eq!(notification_length(Some(100), Some(247)), 100);
+        assert_eq!(notification_length(Some(522), Some(527)), 512);
+        assert_eq!(notification_length(Some(522), None), 512);
+        assert_eq!(notification_length(None, Some(185)), 182);
+        assert_eq!(notification_length(Some(0), Some(23)), 20);
+        assert_eq!(notification_length(None, None), 20);
     }
 
     #[test]

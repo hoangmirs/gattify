@@ -1216,20 +1216,28 @@ impl Engine {
         let operation = buffer(&notification.value)
             .and_then(|value| characteristic.NotifyValueForSubscribedClientAsync(&value, &client))
             .map_err(|error| winrt_error(&error, "the notification"))?;
+        let length = notification.value.len();
         let id = server_id.clone();
         self.spawn(
             async move {
                 let failed = |error: windows::core::Error| winrt_error(&error, "the notification");
                 let result = operation.await.map_err(failed)?;
                 let status = result.Status().map_err(failed)?;
-                if status == GattCommunicationStatus::Success {
-                    Ok(())
-                } else {
-                    Err(communication_error(
+                if status != GattCommunicationStatus::Success {
+                    return Err(communication_error(
                         status.0,
                         att_error(result.ProtocolError()),
                         "the notification",
-                    ))
+                    ));
+                }
+                // Windows cuts a value longer than the link carries. A
+                // count of 0 is taken as unknown.
+                match result.BytesSent().map(usize::from) {
+                    Ok(sent) if sent > 0 && sent < length => Err(BleError::new(
+                        ErrorCode::PayloadTooLarge,
+                        format!("Windows sent {sent} of the {length} bytes of the notification"),
+                    )),
+                    _ => Ok(()),
                 }
             },
             move |engine, outcome| engine.notification_done(&id, token, outcome, true),
@@ -1453,7 +1461,13 @@ impl Engine {
                 unidentified = true;
                 continue;
             };
-            let length = notification_length(client.MaxNotificationSize().unwrap_or(20));
+            let length = notification_length(
+                client.MaxNotificationSize().ok(),
+                client
+                    .Session()
+                    .and_then(|session| session.MaxPduSize())
+                    .ok(),
+            );
             after.insert(device.clone(), length);
             objects.insert(device, client);
         }

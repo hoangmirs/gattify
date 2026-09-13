@@ -100,8 +100,12 @@ verified on hardware yet.
   Windows completes it; one notification per server is outstanding. One that
   stays unanswered 2 s past its deadline is given up, and the next one goes.
 - `SubscribedClientsChanged` is diffed into `subscriptionChanged`, with
-  `maxValueLength = min(MaxNotificationSize, 512)`, and again when
-  `MaxNotificationSizeChanged` fires. A list that cannot be read changes
+  `maxValueLength = min(MaxNotificationSize, MaxPduSize - 3, 512)`, at
+  least 20, from the client and its session, and again when
+  `MaxNotificationSizeChanged` fires. `MaxNotificationSize` may be the ATT
+  MTU rather than the payload (unverified). A notification that Windows
+  reports as sent with fewer bytes than its value (`BytesSent`, when not 0)
+  rejects with `payloadTooLarge`. A list that cannot be read changes
   nothing, and while a client's session cannot be read, no known subscriber
   counts as gone. When Windows lists a known subscriber with a new client
   object, notifications go through the new one. A central keeps its
