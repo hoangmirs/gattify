@@ -408,7 +408,7 @@ impl Engine {
                     .unwrap_or_default()
                     .unwrap_or_default();
                 characteristics.insert(
-                    format!("{}/{}", service.instance_key, characteristic.instance_key),
+                    attribute_key(&service.instance_key, &characteristic.instance_key),
                     LocalAttribute {
                         characteristic: None,
                         tokens: [None, None, None],
@@ -547,7 +547,7 @@ impl Engine {
         let Some(characteristic) = service.characteristics.get(index) else {
             return self.add_service(server_id, key, service_index + 1);
         };
-        let attribute_key = format!("{}/{}", service.instance_key, characteristic.instance_key);
+        let attribute_key = attribute_key(&service.instance_key, &characteristic.instance_key);
         let Some(uuid) = guid(&characteristic.uuid) else {
             let error = invalid_argument(format!("{} is not a UUID", characteristic.uuid));
             return self.fail_registration(&server_id, key, error);
@@ -897,7 +897,10 @@ impl Engine {
         };
         let parameters = match step {
             PublishStep::Start(publication) => Some(self.parameters(publication)),
-            PublishStep::Stop => None,
+            PublishStep::Stop => {
+                self.service_withdrawn(server_id, index);
+                None
+            }
         };
         let Some(service) = self
             .servers
@@ -1033,15 +1036,71 @@ impl Engine {
         let (published, step) = service.publisher.check(status, later);
         match published {
             Some(Published::Started {
-                publication: Publication::Advertised(generation),
+                publication,
                 all_data,
-            }) => self.advertising_started(generation, all_data),
-            Some(Published::Ended(Publication::Advertised(generation))) => {
-                self.advertising_ended(generation, &bluetooth_error(error.0, "advertising"));
+            }) => {
+                self.service_published(server_id, index);
+                if let Publication::Advertised(generation) = publication {
+                    self.advertising_started(generation, all_data);
+                }
             }
-            _ => {}
+            Some(Published::Ended(publication)) => {
+                self.service_withdrawn(server_id, index);
+                if let Publication::Advertised(generation) = publication {
+                    self.advertising_ended(generation, &bluetooth_error(error.0, "advertising"));
+                }
+            }
+            None => {}
         }
         self.apply_step(server_id, index, step);
+    }
+
+    /// The characteristic keys of service `index`.
+    fn service_attributes(&self, server_id: &ServerId, index: usize) -> Vec<String> {
+        let Some(service) = self
+            .servers
+            .get(server_id)
+            .and_then(|server| server.definition.services.get(index))
+        else {
+            return Vec::new();
+        };
+        service
+            .characteristics
+            .iter()
+            .map(|characteristic| {
+                attribute_key(&service.instance_key, &characteristic.instance_key)
+            })
+            .collect()
+    }
+
+    /// Windows adds service `index` to its GATT database again: the
+    /// centrals it lists as subscribed count as subscribed.
+    fn service_published(&mut self, server_id: &ServerId, index: usize) {
+        for characteristic_key in self.service_attributes(server_id, index) {
+            self.subscribers_changed(server_id, &characteristic_key);
+        }
+    }
+
+    /// Service `index` leaves the GATT database while its provider stops,
+    /// and Windows may not report that its subscribers lost it: each one
+    /// counts as unsubscribed, and its queued notifications reject.
+    fn service_withdrawn(&mut self, server_id: &ServerId, index: usize) {
+        for characteristic_key in self.service_attributes(server_id, index) {
+            let devices: Vec<String> = self
+                .servers
+                .get(server_id)
+                .and_then(|server| server.characteristics.get(&characteristic_key))
+                .map(|attribute| attribute.subscribers.keys().cloned().collect())
+                .unwrap_or_default();
+            for device in devices {
+                self.unsubscribed(
+                    server_id,
+                    &characteristic_key,
+                    &device,
+                    "the service left the GATT database",
+                );
+            }
+        }
     }
 
     /// Resolves the `startAdvertising`. When Windows left the name out and
@@ -1400,7 +1459,12 @@ impl Engine {
         for change in subscriber_changes(&before, &after) {
             match change {
                 SubscriberChange::Unsubscribed(device) => {
-                    self.unsubscribed(server_id, characteristic_key, &device);
+                    self.unsubscribed(
+                        server_id,
+                        characteristic_key,
+                        &device,
+                        "the central unsubscribed",
+                    );
                 }
                 SubscriberChange::Subscribed(device, length) => {
                     if let Some(client) = objects.remove(&device) {
@@ -1466,8 +1530,15 @@ impl Engine {
         self.subscription_changed(server_id, characteristic_key, central, Some(length));
     }
 
-    /// A notification still queued for a central that unsubscribed rejects with `disconnected`.
-    fn unsubscribed(&mut self, server_id: &ServerId, characteristic_key: &str, device: &str) {
+    /// A notification still queued for a central that unsubscribed rejects
+    /// with `disconnected` and `reason`.
+    fn unsubscribed(
+        &mut self,
+        server_id: &ServerId,
+        characteristic_key: &str,
+        device: &str,
+        reason: &str,
+    ) {
         let Some(server) = self.servers.get_mut(server_id) else {
             return;
         };
@@ -1486,7 +1557,7 @@ impl Engine {
                 && notification.characteristic_key == characteristic_key
         });
         for notification in dropped {
-            self.reject(notification.key, disconnected("the central unsubscribed"));
+            self.reject(notification.key, disconnected(reason));
         }
         self.subscription_changed(server_id, characteristic_key, subscriber.central, None);
     }
@@ -1560,4 +1631,9 @@ fn provider_status(status: GattServiceProviderAdvertisementStatus) -> ProviderSt
         GattServiceProviderAdvertisementStatus::Aborted => ProviderStatus::Aborted,
         _ => ProviderStatus::Other,
     }
+}
+
+/// The key of a characteristic of a server: `<service>/<characteristic>`.
+fn attribute_key(service: &str, characteristic: &str) -> String {
+    format!("{service}/{characteristic}")
 }

@@ -123,8 +123,15 @@ verified on hardware yet.
 - Windows adds a service to its GATT database only while its provider
   publishes. A server's services become discoverable when the server first
   advertises; its other services are then published without advertising
-  (`IsConnectable` false). `stopAdvertising` keeps the advertised service
-  published the same way, so connected centrals keep it.
+  (`IsConnectable` false). `stopAdvertising` publishes the advertised
+  service again the same way, and new options restart its provider. A
+  provider must stop before it publishes again, so the service leaves the
+  database for a moment and connected centrals may lose it. The backend
+  does not wait for Windows to report that: when a provider stops, each
+  subscriber of its service gets `subscriptionChanged` with
+  `subscribed: false`, and its queued notifications reject with
+  `disconnected`. When the service is published again, the centrals that
+  Windows still lists as subscribed count as subscribed again.
 - A provider takes a new publication only after the previous one ended.
   The backend follows the `AdvertisementStatus` it reads after each start or
   stop, on each `AdvertisementStatusChanged`, and every second while a call
