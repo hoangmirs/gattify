@@ -1,6 +1,9 @@
 use windows::{
     core::{Error, Ref, RuntimeType, GUID},
-    Devices::Bluetooth::GenericAttributeProfile::GattSession,
+    Devices::Bluetooth::{
+        BluetoothLEDevice,
+        GenericAttributeProfile::{GattDeviceService, GattSession},
+    },
     Foundation::{IReference, TypedEventHandler},
     Storage::Streams::{DataReader, DataWriter, IBuffer},
 };
@@ -49,6 +52,31 @@ pub(super) fn session_device(session: windows::core::Result<GattSession>) -> Opt
         .and_then(|device| device.Id())
         .ok()
         .map(|id| id.to_string_lossy())
+}
+
+/// A `WinRT` object that keeps a link open until it closes.
+pub(super) enum Closable {
+    Service(GattDeviceService),
+    Device(BluetoothLEDevice),
+    Session(GattSession),
+}
+
+/// Closes `objects` on a blocking thread, in order. A `Close` can hang
+/// (bleak reports it for `GattDeviceService`), and the engine thread must
+/// not, so only the close leaves it: every state change stays on the engine.
+pub(super) fn close_in_background(objects: Vec<Closable>) {
+    if objects.is_empty() {
+        return;
+    }
+    tokio::task::spawn_blocking(move || {
+        for object in objects {
+            let _ = match object {
+                Closable::Service(service) => service.Close(),
+                Closable::Device(device) => device.Close(),
+                Closable::Session(session) => session.Close(),
+            };
+        }
+    });
 }
 
 pub(super) fn bytes(buffer: &IBuffer) -> windows::core::Result<Vec<u8>> {

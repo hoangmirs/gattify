@@ -25,7 +25,10 @@ use windows::{
 use windows_future::IAsyncOperation;
 
 use super::{
-    convert::{att_error, buffer, bytes, handler, items, uuid, winrt_error, winrt_or_missing},
+    convert::{
+        att_error, buffer, bytes, close_in_background, handler, items, uuid, winrt_error,
+        winrt_or_missing, Closable,
+    },
     engine::{busy, cancelled, decode, disconnected, Cleanup, Engine},
     gatt::{
         check_access, check_write_length, link_limits, properties_from_bits, Access, Mode,
@@ -478,7 +481,7 @@ impl Engine {
             }
         };
         if self.connecting(connection_id).is_none() {
-            let _ = device.Close();
+            close_in_background(vec![Closable::Device(device)]);
             return;
         }
         let poster = self.poster.clone();
@@ -532,11 +535,11 @@ impl Engine {
             }
         };
         if self.connecting(connection_id).is_none() {
-            let _ = session.Close();
+            close_in_background(vec![Closable::Session(session)]);
             return;
         }
         if !session.CanMaintainConnection().unwrap_or(false) {
-            let _ = session.Close();
+            close_in_background(vec![Closable::Session(session)]);
             return self.fail_connect(
                 connection_id,
                 BleError::unsupported("Windows cannot keep a connection to this device"),
@@ -704,29 +707,32 @@ impl Engine {
         let owner = link.owner.clone();
         let connect_key = link.connect_key.take();
         let procedures = link.queue.drain();
+        // The value handlers go first, while their services are still open.
         let subscriptions: Vec<Subscription> = link
             .subscriptions
             .drain()
             .map(|(_, subscription)| subscription)
             .collect();
-        link.handles.forget_attributes();
-        for service in link.services.drain(..) {
-            let _ = service.Close();
+        for subscription in &subscriptions {
+            if let Some(token) = subscription.value_token {
+                let _ = subscription.characteristic.RemoveValueChanged(token);
+            }
         }
+        link.handles.forget_attributes();
+        let mut closing_objects: Vec<Closable> =
+            link.services.drain(..).map(Closable::Service).collect();
         if let Some(device) = link.device.take() {
             if let Some(token) = link.status_token.take() {
                 let _ = device.RemoveConnectionStatusChanged(token);
             }
-            let _ = device.Close();
+            closing_objects.push(Closable::Device(device));
         }
         let active = link.session.as_ref().is_some_and(|session| {
             let _ = session.SetMaintainConnection(false);
             session.SessionStatus().ok() == Some(GattSessionStatus::Active)
         });
+        close_in_background(closing_objects);
         for subscription in subscriptions {
-            if let Some(token) = subscription.value_token {
-                let _ = subscription.characteristic.RemoveValueChanged(token);
-            }
             self.subscriptions.remove(&subscription.id);
         }
         if let Some(key) = connect_key {
@@ -778,7 +784,7 @@ impl Engine {
             if let Some(token) = mtu_token {
                 let _ = session.RemoveMaxPduSizeChanged(token);
             }
-            let _ = session.Close();
+            close_in_background(vec![Closable::Session(session)]);
         }
         for key in link.disconnects {
             self.resolve(key, Reply::Empty);
@@ -1019,9 +1025,12 @@ impl Engine {
             self.settle(connection_id, token, outcome);
             self.pump(connection_id);
         } else if let Ok(Done::Services(found)) = outcome {
-            for (service, _) in found {
-                let _ = service.Close();
-            }
+            close_in_background(
+                found
+                    .into_iter()
+                    .map(|(service, _)| Closable::Service(service))
+                    .collect(),
+            );
         }
     }
 
@@ -1394,9 +1403,7 @@ async fn characteristics_of(service: &GattDeviceService) -> BleResult<Vec<GattCh
 }
 
 fn close_services(services: &[GattDeviceService]) {
-    for service in services {
-        let _ = service.Close();
-    }
+    close_in_background(services.iter().cloned().map(Closable::Service).collect());
 }
 
 async fn read_value(operation: IAsyncOperation<GattReadResult>) -> BleResult<Vec<u8>> {

@@ -69,10 +69,12 @@ verified on hardware yet.
   `MaintainConnection`. It resolves when the session is active and
   `MaxPduSize`, the ATT MTU, exceeds 23, or 1 s after the session became
   active. The limits are `min(mtu - 3, 512)`.
-- `disconnect` closes every service, the device and the session, so that
-  Windows can drop the link, and replies when the session reports the close or
-  after 2 s. A session that closes, or a device that reports `Disconnected`,
-  ends a connected link with `connectionClosed`.
+- `disconnect` removes the value handlers, then closes every service, the
+  device and the session, so that Windows can drop the link, and replies when
+  the session reports the close or after 2 s. The `Close` calls run on a
+  blocking thread, because a `Close` can hang. A session that closes, or a
+  device that reports `Disconnected`, ends a connected link with
+  `connectionClosed`.
 - Each connection runs one GATT procedure at a time. A procedure that passes
   its deadline in flight closes the connection with `connectionClosed`. A
   cancelled one keeps its place until its completion, and a cancelled
