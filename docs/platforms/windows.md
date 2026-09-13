@@ -38,6 +38,12 @@ verified on hardware yet.
   `Disabled` (a hardware switch or the firmware) are `poweredOff`, anything
   else is `unknown`. `Radio.StateChanged` drives `adapterStateChanged` and the
   sequence of the contract when Bluetooth turns off.
+- Windows gives no radio object to a process whose architecture differs from
+  the system's, such as an x64 build under emulation on Windows on ARM. An LE
+  adapter without a radio then counts as `poweredOn`, and a command fails with
+  the error of its platform call, for example `bluetoothOff` from
+  `RadioNotAvailable`. Later commands look for the radio again in the
+  background; once it appears, its state applies.
 - `checkPermissions` and `requestPermissions` report `notRequired` for every
   role and never show UI: an unpackaged desktop app has no runtime Bluetooth
   permission, and a packaged app declares the `bluetooth` capability in its

@@ -32,7 +32,10 @@ pub(super) struct AdapterFacts {
 }
 
 /// A missing adapter or one without LE is `unavailable`. A disabled radio is
-/// off: the adapter is there, and switching the radio on brings it back.
+/// off: the adapter is there, and switching the radio on brings it back. An
+/// LE adapter without a radio object counts as on: Windows gives none to a
+/// process whose architecture differs from the system's, and commands then
+/// report the error of the platform call instead.
 pub(super) fn adapter_state(
     facts: Option<&AdapterFacts>,
     radio: Option<RadioPower>,
@@ -40,9 +43,9 @@ pub(super) fn adapter_state(
     match (facts, radio) {
         (None, _) => AdapterState::Unavailable,
         (Some(facts), _) if !facts.low_energy => AdapterState::Unavailable,
-        (Some(_), Some(RadioPower::On)) => AdapterState::PoweredOn,
+        (Some(_), Some(RadioPower::On) | None) => AdapterState::PoweredOn,
         (Some(_), Some(RadioPower::Off | RadioPower::Disabled)) => AdapterState::PoweredOff,
-        (Some(_), Some(RadioPower::Unknown) | None) => AdapterState::Unknown,
+        (Some(_), Some(RadioPower::Unknown)) => AdapterState::Unknown,
     }
 }
 
@@ -268,7 +271,21 @@ mod tests {
             adapter_state(Some(&le), Some(RadioPower::Unknown)),
             AdapterState::Unknown
         );
-        assert_eq!(adapter_state(Some(&le), None), AdapterState::Unknown);
+    }
+
+    #[test]
+    fn an_le_adapter_without_a_radio_counts_as_on() {
+        let le = facts(true, true);
+        assert_eq!(adapter_state(Some(&le), None), AdapterState::PoweredOn);
+        assert_eq!(readiness_error(adapter_state(Some(&le), None)), None);
+        let classic_only = AdapterFacts {
+            low_energy: false,
+            ..le
+        };
+        assert_eq!(
+            adapter_state(Some(&classic_only), None),
+            AdapterState::Unavailable
+        );
     }
 
     #[test]

@@ -23,15 +23,20 @@ pub(super) enum AdapterSlot {
 }
 
 pub(super) struct LoadedAdapter {
+    adapter: BluetoothAdapter,
     facts: AdapterFacts,
-    /// Kept so that its `StateChanged` handler stays registered.
+    /// Kept so that its `StateChanged` handler stays registered. Without it
+    /// the adapter counts as on.
     radio: Option<Radio>,
+    /// A `GetRadioAsync` runs in the background.
+    radio_lookup: bool,
 }
 
 impl Engine {
     /// Runs `then` once the default adapter is known, while the operation is
     /// pending. With `need_on`, a command rejects first when the adapter is
-    /// not on. A missing adapter is looked up again by the next command.
+    /// not on. A missing adapter is looked up again by the next command, and
+    /// so is a missing radio, in the background.
     pub(super) fn when_adapter(
         &mut self,
         key: u64,
@@ -62,6 +67,7 @@ impl Engine {
                 return;
             }
         }
+        self.find_radio();
         job(self);
     }
 
@@ -107,20 +113,32 @@ impl Engine {
         };
         match adapter.GetRadioAsync() {
             Ok(operation) => self.spawn(operation.into_future(), move |engine, radio| {
-                engine.radio_found(facts, radio.ok());
+                let radio = radio.ok().filter(|radio| engine.watch_radio(radio));
+                engine.adapter_loaded(Some(LoadedAdapter {
+                    adapter,
+                    facts,
+                    radio,
+                    radio_lookup: false,
+                }));
             }),
-            Err(_) => self.radio_found(facts, None),
+            Err(_) => self.adapter_loaded(Some(LoadedAdapter {
+                adapter,
+                facts,
+                radio: None,
+                radio_lookup: false,
+            })),
         }
     }
 
-    fn radio_found(&mut self, facts: AdapterFacts, radio: Option<Radio>) {
-        if let Some(radio) = &radio {
-            let poster = self.poster.clone();
-            let _ = radio.StateChanged(&handler::<Radio, IInspectable>(move |_| {
+    /// Registers the `StateChanged` handler of a radio. A radio whose handler
+    /// cannot be registered is treated as missing.
+    fn watch_radio(&self, radio: &Radio) -> bool {
+        let poster = self.poster.clone();
+        radio
+            .StateChanged(&handler::<Radio, IInspectable>(move |_| {
                 poster.post(Engine::radio_changed);
-            }));
-        }
-        self.adapter_loaded(Some(LoadedAdapter { facts, radio }));
+            }))
+            .is_ok()
     }
 
     fn adapter_loaded(&mut self, loaded: Option<LoadedAdapter>) {
@@ -135,6 +153,32 @@ impl Engine {
         for waiter in waiters {
             waiter(self);
         }
+    }
+
+    /// Looks for the radio of the loaded adapter again while it has none.
+    /// One lookup runs at a time.
+    fn find_radio(&mut self) {
+        let AdapterSlot::Loaded(loaded) = &mut self.adapter else {
+            return;
+        };
+        if loaded.radio.is_some() || loaded.radio_lookup {
+            return;
+        }
+        let Ok(operation) = loaded.adapter.GetRadioAsync() else {
+            return;
+        };
+        loaded.radio_lookup = true;
+        self.spawn(operation.into_future(), |engine, radio| {
+            let radio = radio.ok().filter(|radio| engine.watch_radio(radio));
+            let AdapterSlot::Loaded(loaded) = &mut engine.adapter else {
+                return;
+            };
+            loaded.radio_lookup = false;
+            if radio.is_some() {
+                loaded.radio = radio;
+                engine.radio_changed();
+            }
+        });
     }
 
     fn radio_changed(&mut self) {
