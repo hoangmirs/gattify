@@ -123,7 +123,10 @@ verified on hardware yet.
 - Windows adds a service to its GATT database only while its provider
   publishes. A server's services become discoverable when the server first
   advertises; its other services are then published without advertising
-  (`IsConnectable` false). `stopAdvertising` publishes the advertised
+  (`IsConnectable` false). A server that never advertises is never visible.
+  Only one server of the process advertises at a time, so a second server
+  stays invisible while another one advertises, and until it advertises
+  itself. `stopAdvertising` publishes the advertised
   service again the same way, and new options restart its provider. A
   provider must stop before it publishes again, so the service leaves the
   database for a moment and connected centrals may lose it. The backend
