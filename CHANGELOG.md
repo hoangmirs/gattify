@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-14
+
 - The crate includes its `LICENSE` file. The published alphas lack it.
 - CI checks the licenses, bans and sources of every Rust dependency with
   `cargo deny`.
