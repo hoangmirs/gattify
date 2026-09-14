@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The crate includes its `LICENSE` file. The published alphas lack it.
+- CI checks the licenses, bans and sources of every Rust dependency with
+  `cargo deny`.
+
 ## 0.1.0-alpha.2 - 2026-09-13
 
 This prerelease brings the radio to macOS and Windows, so that a desktop app

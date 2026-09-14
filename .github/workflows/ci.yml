@@ -30,6 +30,11 @@ jobs:
       - run: cargo check --locked --manifest-path fuzz/Cargo.toml
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - run: cargo package --locked -p tauri-plugin-gattify
+      - run: cmp LICENSE crates/tauri-plugin-gattify/LICENSE
+      - uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --all-features check licenses bans sources
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22

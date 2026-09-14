@@ -121,7 +121,18 @@ jobs:
     permissions:
       contents: write
     steps:
-      - run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+      # A draft release of the version holds notes written ahead of time: publish it, with the
+      # generated notes below them. Otherwise create the release with generated notes only.
+      - run: |
+          draft=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || true)
+          if [ "$draft" = "true" ]; then
+            written=$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json body -q .body)
+            generated=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="v$VERSION" -q .body)
+            printf '%s\n\n%s\n' "$written" "$generated" > notes.md
+            gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --verify-tag --notes-file notes.md
+          else
+            gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.bump.outputs.version }}
