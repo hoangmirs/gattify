@@ -11,6 +11,11 @@ on:
         type: boolean
         default: false
 
+# Inside release.yml, github.workflow is "Release", so a CI run never cancels or queues a release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
     runs-on: ubuntu-latest
@@ -24,6 +29,12 @@ jobs:
         with:
           toolchain: 1.89.0
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+            examples/gattify-lab/src-tauri -> target
       - run: cargo fmt --all --check
       - run: cargo test --locked --workspace --all-features
       - run: cargo test --locked --workspace --no-default-features
@@ -65,6 +76,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          # The default provider is proprietary. This one is MIT.
+          cache-provider: basic
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -73,6 +88,9 @@ jobs:
         with:
           toolchain: 1.89.0
           targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: examples/gattify-lab/src-tauri -> target
       - run: npm ci
       - run: npm run build
       - name: Generate the lab app's Android project
@@ -96,6 +114,7 @@ jobs:
         with:
           toolchain: 1.89.0
           targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Compile the plugin and its Swift package for iOS
         run: cargo build --locked -p tauri-plugin-gattify --target aarch64-apple-ios
       - name: Run the plugin's Swift unit tests on a simulator
@@ -113,6 +132,11 @@ jobs:
         with:
           toolchain: 1.89.0
           components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            examples/gattify-lab/src-tauri -> target
       - name: Compile the Swift engine for macOS and test the plugin through it
         run: cargo test --locked --workspace --all-features
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -136,6 +160,11 @@ jobs:
         with:
           toolchain: 1.89.0
           components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            . -> target
+            examples/gattify-lab/src-tauri -> target
       - run: cargo test --locked --workspace --all-features
       - run: cargo test --locked --workspace --no-default-features
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
