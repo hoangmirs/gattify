@@ -35,7 +35,7 @@ tauri = { workspace = true, optional = true, features = ["wry"] }
 
 # The versions Tauri already uses on Windows.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "=0.61.3", optional = true, features = [
+windows = { version = "=0.62.2", optional = true, features = [
     "Devices_Bluetooth",
     "Devices_Bluetooth_Advertisement",
     "Devices_Bluetooth_GenericAttributeProfile",
@@ -43,13 +43,13 @@ windows = { version = "=0.61.3", optional = true, features = [
     "Foundation",
     "Storage_Streams",
 ] }
-windows-collections = { version = "=0.2.0", optional = true }
+windows-collections = { version = "=0.3.2", optional = true }
 # Its std feature makes WinRT async operations awaitable.
-windows-future = { version = "=0.2.1", optional = true }
+windows-future = { version = "=0.3.2", optional = true }
 
 [build-dependencies]
 serde_json.workspace = true
-tauri-plugin = { version = "=2.6.3", features = ["build"], optional = true }
+tauri-plugin = { version = "=2.7.0", features = ["build"], optional = true }
 
 [dev-dependencies]
 futures-lite = "=2.6.1"
