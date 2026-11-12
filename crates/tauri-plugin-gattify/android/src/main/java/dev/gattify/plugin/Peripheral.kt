@@ -449,16 +449,24 @@ internal class Peripheral(private val backend: GattifyBackend) {
 
   private fun connectionChanged(device: BluetoothDevice, newState: Int) {
     when (newState) {
-      BluetoothProfile.STATE_CONNECTED -> central(device)
+      BluetoothProfile.STATE_CONNECTED -> {
+        central(device)
+        backend.advertiser.rearm()
+      }
       BluetoothProfile.STATE_DISCONNECTED -> {
-        val central = centrals.remove(device.address) ?: return
-        central.prepared.clear()
-        val error = disconnected("${central.id} disconnected")
-        for (notification in notifications.removeWaiting { it.central === central }) notification.procedure.reject(error)
-        notifications.inFlight?.takeIf { it.central === central }?.let { notificationDone(it, error) }
-        endSubscriptions(central)
+        val central = centrals[device.address] ?: return
+        centralGone(central, disconnected("${central.id} disconnected"))
       }
     }
+  }
+
+  /** Forgets [central]: its notifications reject with [error], and its subscriptions end. */
+  private fun centralGone(central: RemoteCentral, error: BleException) {
+    if (centrals[central.device.address] === central) centrals.remove(central.device.address)
+    central.prepared.clear()
+    for (notification in notifications.removeWaiting { it.central === central }) notification.procedure.reject(error)
+    notifications.inFlight?.takeIf { it.central === central }?.let { notificationDone(it, error) }
+    endSubscriptions(central)
   }
 
   /** Emits `subscribed: false` for each subscription of [central]. */
@@ -597,7 +605,7 @@ internal class Peripheral(private val backend: GattifyBackend) {
    * Sends the next notification. One notification is outstanding for the whole server,
    * and only `onNotificationSent` ends it: the callback names no notification, so the
    * next one never leaves before it. When the stack stays silent past the deadline and a
-   * grace, the generation ends instead.
+   * grace, that central alone is dropped, and the others keep the server.
    */
   private fun nextNotification() {
     val platform = platformServer ?: return
@@ -609,7 +617,7 @@ internal class Peripheral(private val backend: GattifyBackend) {
         val silence = (notification.deadlineAt - backend.scheduler.now()).coerceAtLeast(0) + NOTIFICATION_GRACE_MS
         notificationWatchdog?.cancel()
         notificationWatchdog = backend.scheduler.schedule(silence) {
-          if (callback === generation && notifications.inFlight === notification) stalled("notificationTimeout")
+          if (callback === generation && notifications.inFlight === notification) dropStalled(notification)
         }
         return
       } catch (e: BleException) {
@@ -660,6 +668,20 @@ internal class Peripheral(private val backend: GattifyBackend) {
       notification,
       if (status == BluetoothGatt.GATT_SUCCESS) null else gattStatusError(status, "notify"),
     )
+  }
+
+  /**
+   * [notification] stayed unanswered past its deadline and a grace. Ending the generation
+   * dropped every central for one that had gone quiet. This central is forgotten at once, as
+   * a disconnect forgets it: a notify to it then fails fast instead of taking the one slot
+   * the server has, and a late `onNotificationSent` from it finds nothing of its own.
+   */
+  @SuppressLint("MissingPermission")
+  private fun dropStalled(notification: Notification) {
+    val central = notification.central
+    Log.w(TAG, "${central.id} stopped answering notifications")
+    platformServer?.let { platform -> quietly { platform.cancelConnection(central.device) } }
+    centralGone(central, disconnected("${central.id} stopped answering"))
   }
 
   private fun notificationDone(notification: Notification, error: BleException?) {

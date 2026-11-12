@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+An Android host keeps several centrals. Neither change has run on radio
+hardware yet.
+
+- A central that leaves a notification unanswered past its deadline is dropped
+  alone, as if it disconnected. The Android platform server no longer closes
+  for it, so the other centrals stay connected. `criticalStateLoss` no longer
+  reports `notificationTimeout`.
+- The Android backend starts a copy of its advertisement after a central
+  connects, and stops the old one once the copy runs. Some devices stop a
+  connectable advertisement on a connection, and a second central found
+  nothing.
+
 ## 0.1.0 - 2026-09-14
 
 - The crate includes its `LICENSE` file. The published alphas lack it.

@@ -6,6 +6,7 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
 import android.os.ParcelUuid
+import android.util.Log
 
 /**
  * The one advertisement of the process: legacy, connectable, with the service UUID
@@ -16,6 +17,8 @@ import android.os.ParcelUuid
 // that use them suppress MissingPermission.
 internal class Advertiser(private val backend: GattifyBackend) {
   private var current: Advertisement? = null
+  /** The copy a rearm starts. It takes the place of [current] only once it runs. */
+  private var rearming: Advertisement? = null
 
   /** The platform calls back on the main thread, so each callback moves to the handler. */
   private inner class Advertisement(
@@ -23,6 +26,9 @@ internal class Advertiser(private val backend: GattifyBackend) {
     val platformAdvertiser: BluetoothLeAdvertiser,
     val nameIncluded: Boolean,
     val nameTruncated: Boolean,
+    val settings: AdvertiseSettings,
+    val data: AdvertiseData,
+    val scanResponse: AdvertiseData,
   ) : AdvertiseCallback() {
     /** The pending `startAdvertising`, until the platform answers. */
     var procedure: Procedure? = null
@@ -54,11 +60,6 @@ internal class Advertiser(private val backend: GattifyBackend) {
     // The same server advertises again: restart with the new options.
     existing?.let { stop(it) }
     val nameBytes = name?.bytes ?: ByteArray(0)
-    val advertisement = Advertisement(server, platformAdvertiser, nameBytes.isNotEmpty(), name?.truncated == true)
-    advertisement.procedure = procedure
-    current = advertisement
-    procedure.onAbort { if (current === advertisement) stop(advertisement) }
-    procedure.armDeadline(deadlineFor("startAdvertising", request.deadlineMillis))
 
     val settings = AdvertiseSettings.Builder()
       .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -75,7 +76,50 @@ internal class Advertiser(private val backend: GattifyBackend) {
       .build()
     val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(false).setIncludeTxPowerLevel(false)
     if (nameBytes.isNotEmpty()) scanResponse.addServiceData(uuid, nameBytes)
-    guard { platformAdvertiser.startAdvertising(settings, data, scanResponse.build(), advertisement) }
+    val advertisement = Advertisement(
+      server,
+      platformAdvertiser,
+      nameBytes.isNotEmpty(),
+      name?.truncated == true,
+      settings,
+      data,
+      scanResponse.build(),
+    )
+    advertisement.procedure = procedure
+    current = advertisement
+    procedure.onAbort { if (current === advertisement) stop(advertisement) }
+    procedure.armDeadline(deadlineFor("startAdvertising", request.deadlineMillis))
+    guard { platformAdvertiser.startAdvertising(settings, data, advertisement.scanResponse, advertisement) }
+  }
+
+  /**
+   * A central connected. Some devices stop a connectable advertisement then, and a second
+   * central would find nothing. A copy with the same data starts, and the old one stops only
+   * once the copy runs: a copy the device refuses leaves the old one as it was.
+   */
+  @SuppressLint("MissingPermission")
+  fun rearm() {
+    val old = current?.takeIf { it.procedure == null } ?: return
+    if (rearming != null) return
+    val copy = Advertisement(
+      old.server,
+      old.platformAdvertiser,
+      old.nameIncluded,
+      old.nameTruncated,
+      old.settings,
+      old.data,
+      old.scanResponse,
+    )
+    rearming = copy
+    quietly { copy.platformAdvertiser.startAdvertising(copy.settings, copy.data, copy.scanResponse, copy) }
+  }
+
+  /** Stops a rearm's copy that has not taken over yet. */
+  @SuppressLint("MissingPermission")
+  private fun dropRearm() {
+    val copy = rearming ?: return
+    rearming = null
+    quietly { copy.platformAdvertiser.stopAdvertising(copy) }
   }
 
   fun stop(request: Request, procedure: Procedure) {
@@ -85,6 +129,7 @@ internal class Advertiser(private val backend: GattifyBackend) {
 
   /** Stops the advertisement of [server], if it has one. */
   fun stopFor(server: LocalServer) {
+    if (rearming?.server === server) dropRearm()
     val advertisement = current?.takeIf { it.server === server } ?: return
     advertisement.procedure?.reject(cancelled("the advertisement stopped"))
     advertisement.procedure = null
@@ -92,6 +137,7 @@ internal class Advertiser(private val backend: GattifyBackend) {
   }
 
   fun adapterOff() {
+    rearming = null
     val advertisement = current ?: return
     current = null
     advertisement.procedure?.reject(BleException(ErrorCode.BLUETOOTH_OFF, "Bluetooth turned off"))
@@ -100,12 +146,26 @@ internal class Advertiser(private val backend: GattifyBackend) {
 
   @SuppressLint("MissingPermission")
   private fun stop(advertisement: Advertisement) {
-    if (current === advertisement) current = null
+    if (current === advertisement) {
+      current = null
+      dropRearm()
+    }
     quietly { advertisement.platformAdvertiser.stopAdvertising(advertisement) }
   }
 
   @SuppressLint("MissingPermission")
   private fun started(advertisement: Advertisement) {
+    if (rearming === advertisement) {
+      rearming = null
+      val old = current
+      if (old == null || old.procedure != null || old.server !== advertisement.server) {
+        quietly { advertisement.platformAdvertiser.stopAdvertising(advertisement) }
+        return
+      }
+      current = advertisement
+      quietly { old.platformAdvertiser.stopAdvertising(old) }
+      return
+    }
     if (current !== advertisement) {
       // A timeout or a stop ended it before the platform answered.
       quietly { advertisement.platformAdvertiser.stopAdvertising(advertisement) }
@@ -117,6 +177,13 @@ internal class Advertiser(private val backend: GattifyBackend) {
   }
 
   private fun failed(advertisement: Advertisement, errorCode: Int) {
+    if (rearming === advertisement) {
+      // The old advertisement stays as it was. A device with one advertising slot refuses the
+      // copy while the old one still runs, which is the case the copy was not needed for.
+      rearming = null
+      Log.w(TAG, "a rearm's advertisement failed with $errorCode")
+      return
+    }
     if (current !== advertisement) return
     current = null
     advertisement.procedure?.reject(advertiseFailure(errorCode))
