@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-12
+
 An Android host keeps several centrals. Neither change has run on radio
 hardware yet.
 
