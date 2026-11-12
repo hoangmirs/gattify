@@ -2,10 +2,8 @@
 
 ## Unreleased
 
-## 0.1.1-alpha.1 - 2026-11-12
-
-This prerelease lets an Android host keep several centrals. Neither change has
-run on radio hardware yet.
+An Android host keeps several centrals. Neither change has run on radio
+hardware yet.
 
 - A central that leaves a notification unanswered past its deadline is dropped
   alone, as if it disconnected. The Android platform server no longer closes
