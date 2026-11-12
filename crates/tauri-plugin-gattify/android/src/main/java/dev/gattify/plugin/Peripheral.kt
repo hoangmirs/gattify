@@ -449,7 +449,10 @@ internal class Peripheral(private val backend: GattifyBackend) {
 
   private fun connectionChanged(device: BluetoothDevice, newState: Int) {
     when (newState) {
-      BluetoothProfile.STATE_CONNECTED -> central(device)
+      BluetoothProfile.STATE_CONNECTED -> {
+        central(device)
+        backend.advertiser.rearm()
+      }
       BluetoothProfile.STATE_DISCONNECTED -> {
         val central = centrals.remove(device.address) ?: return
         central.prepared.clear()

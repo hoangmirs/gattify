@@ -23,6 +23,9 @@ internal class Advertiser(private val backend: GattifyBackend) {
     val platformAdvertiser: BluetoothLeAdvertiser,
     val nameIncluded: Boolean,
     val nameTruncated: Boolean,
+    val settings: AdvertiseSettings,
+    val data: AdvertiseData,
+    val scanResponse: AdvertiseData,
   ) : AdvertiseCallback() {
     /** The pending `startAdvertising`, until the platform answers. */
     var procedure: Procedure? = null
@@ -54,11 +57,6 @@ internal class Advertiser(private val backend: GattifyBackend) {
     // The same server advertises again: restart with the new options.
     existing?.let { stop(it) }
     val nameBytes = name?.bytes ?: ByteArray(0)
-    val advertisement = Advertisement(server, platformAdvertiser, nameBytes.isNotEmpty(), name?.truncated == true)
-    advertisement.procedure = procedure
-    current = advertisement
-    procedure.onAbort { if (current === advertisement) stop(advertisement) }
-    procedure.armDeadline(deadlineFor("startAdvertising", request.deadlineMillis))
 
     val settings = AdvertiseSettings.Builder()
       .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -75,7 +73,38 @@ internal class Advertiser(private val backend: GattifyBackend) {
       .build()
     val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(false).setIncludeTxPowerLevel(false)
     if (nameBytes.isNotEmpty()) scanResponse.addServiceData(uuid, nameBytes)
-    guard { platformAdvertiser.startAdvertising(settings, data, scanResponse.build(), advertisement) }
+    val advertisement = Advertisement(
+      server,
+      platformAdvertiser,
+      nameBytes.isNotEmpty(),
+      name?.truncated == true,
+      settings,
+      data,
+      scanResponse.build(),
+    )
+    advertisement.procedure = procedure
+    current = advertisement
+    procedure.onAbort { if (current === advertisement) stop(advertisement) }
+    procedure.armDeadline(deadlineFor("startAdvertising", request.deadlineMillis))
+    guard { platformAdvertiser.startAdvertising(settings, data, advertisement.scanResponse, advertisement) }
+  }
+
+  /**
+   * A central connected. Some devices stop a connectable advertisement then, and a second
+   * central would find nothing. The advertisement that runs starts again with the same data.
+   */
+  @SuppressLint("MissingPermission")
+  fun rearm() {
+    val advertisement = current?.takeIf { it.procedure == null } ?: return
+    quietly {
+      advertisement.platformAdvertiser.stopAdvertising(advertisement)
+      advertisement.platformAdvertiser.startAdvertising(
+        advertisement.settings,
+        advertisement.data,
+        advertisement.scanResponse,
+        advertisement,
+      )
+    }
   }
 
   fun stop(request: Request, procedure: Procedure) {
@@ -118,6 +147,8 @@ internal class Advertiser(private val backend: GattifyBackend) {
 
   private fun failed(advertisement: Advertisement, errorCode: Int) {
     if (current !== advertisement) return
+    // A rearm on a device that kept the advertisement running: it still advertises.
+    if (advertisement.procedure == null && errorCode == AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED) return
     current = null
     advertisement.procedure?.reject(advertiseFailure(errorCode))
     advertisement.procedure = null

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.1.1-alpha.1 - 2026-11-12
+
+This prerelease lets an Android host keep several centrals. Neither change has
+run on radio hardware yet.
+
+- A central that leaves a notification unanswered past its deadline is dropped
+  alone. The Android platform server no longer closes for it, so the other
+  centrals stay connected. `criticalStateLoss` no longer reports
+  `notificationTimeout`.
+- The Android backend starts its advertisement again after a central connects.
+  Some devices stop a connectable advertisement on a connection, and a second
+  central found nothing.
+
 ## 0.1.0 - 2026-09-14
 
 - The crate includes its `LICENSE` file. The published alphas lack it.
