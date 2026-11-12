@@ -597,7 +597,7 @@ internal class Peripheral(private val backend: GattifyBackend) {
    * Sends the next notification. One notification is outstanding for the whole server,
    * and only `onNotificationSent` ends it: the callback names no notification, so the
    * next one never leaves before it. When the stack stays silent past the deadline and a
-   * grace, the generation ends instead.
+   * grace, that central alone is dropped, and the others keep the server.
    */
   private fun nextNotification() {
     val platform = platformServer ?: return
@@ -609,7 +609,7 @@ internal class Peripheral(private val backend: GattifyBackend) {
         val silence = (notification.deadlineAt - backend.scheduler.now()).coerceAtLeast(0) + NOTIFICATION_GRACE_MS
         notificationWatchdog?.cancel()
         notificationWatchdog = backend.scheduler.schedule(silence) {
-          if (callback === generation && notifications.inFlight === notification) stalled("notificationTimeout")
+          if (callback === generation && notifications.inFlight === notification) dropStalled(notification)
         }
         return
       } catch (e: BleException) {
@@ -660,6 +660,21 @@ internal class Peripheral(private val backend: GattifyBackend) {
       notification,
       if (status == BluetoothGatt.GATT_SUCCESS) null else gattStatusError(status, "notify"),
     )
+  }
+
+  /**
+   * [notification] stayed unanswered past its deadline and a grace. Ending the generation
+   * dropped every central for one that had gone quiet. A late `onNotificationSent` names
+   * this device, which no longer matches the one in flight, so it answers nothing.
+   */
+  @SuppressLint("MissingPermission")
+  private fun dropStalled(notification: Notification) {
+    val central = notification.central
+    Log.w(TAG, "${central.id} stopped answering notifications")
+    val error = disconnected("${central.id} stopped answering")
+    for (waiting in notifications.removeWaiting { it.central === central }) waiting.procedure.reject(error)
+    platformServer?.let { platform -> quietly { platform.cancelConnection(central.device) } }
+    notificationDone(notification, error)
   }
 
   private fun notificationDone(notification: Notification, error: BleException?) {

@@ -184,8 +184,8 @@ verified on hardware yet.
   it drops out of `SubscribedClients`. A peripheral cannot disconnect a
   central, as on iOS.
 - `criticalStateLoss` reports `bluetoothOff`, or `unavailable` when the radio
-  state becomes unknown. The Android reasons `notificationTimeout` and
-  `serviceAddTimeout` do not occur: WinRT names each operation, so a late
+  state becomes unknown. The Android reason `serviceAddTimeout` does
+  not occur: WinRT names each operation, so a late
   answer cannot reach the next one.
 - `maxAdvertisingDataLength` is 31, or less when the adapter reports less.
   Extended advertising is not used. `simultaneousRoles` follows the peripheral

@@ -45,11 +45,15 @@ tests. No radio behavior is verified on hardware yet.
 - A CCCD write must be two bytes, with no reserved bit and only the modes that
   the characteristic has. `notify` sends an indication when the central enabled
   only indications.
-- The server callbacks carry no request ID. When an `addService` or a
-  notification stays unanswered past its deadline, the platform server closes:
-  its pending calls reject, subscribers end with `subscribed: false`, and its
-  servers report `criticalStateLoss` with the reason `serviceAddTimeout` or
-  `notificationTimeout`. The next `createServer` opens a new one.
+- The server callbacks carry no request ID. When an `addService` stays
+  unanswered past its deadline, the platform server closes: its pending calls
+  reject, subscribers end with `subscribed: false`, and its servers report
+  `criticalStateLoss` with the reason `serviceAddTimeout`. The next
+  `createServer` opens a new one.
+- `onNotificationSent` names the device. When a notification stays unanswered
+  past its deadline and a 2 s grace, the backend drops that central alone. Its
+  queued notifications reject with `disconnected`, and the backend cancels its
+  connection. The other centrals keep the server.
 - When the activity is destroyed, the backend releases every resource without
   events, unregisters its receiver and quits its thread. The next command creates
   a new backend. IDs belong to the process, so none repeats.
