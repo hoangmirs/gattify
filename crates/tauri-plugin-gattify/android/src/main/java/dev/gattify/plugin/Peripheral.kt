@@ -454,14 +454,19 @@ internal class Peripheral(private val backend: GattifyBackend) {
         backend.advertiser.rearm()
       }
       BluetoothProfile.STATE_DISCONNECTED -> {
-        val central = centrals.remove(device.address) ?: return
-        central.prepared.clear()
-        val error = disconnected("${central.id} disconnected")
-        for (notification in notifications.removeWaiting { it.central === central }) notification.procedure.reject(error)
-        notifications.inFlight?.takeIf { it.central === central }?.let { notificationDone(it, error) }
-        endSubscriptions(central)
+        val central = centrals[device.address] ?: return
+        centralGone(central, disconnected("${central.id} disconnected"))
       }
     }
+  }
+
+  /** Forgets [central]: its notifications reject with [error], and its subscriptions end. */
+  private fun centralGone(central: RemoteCentral, error: BleException) {
+    if (centrals[central.device.address] === central) centrals.remove(central.device.address)
+    central.prepared.clear()
+    for (notification in notifications.removeWaiting { it.central === central }) notification.procedure.reject(error)
+    notifications.inFlight?.takeIf { it.central === central }?.let { notificationDone(it, error) }
+    endSubscriptions(central)
   }
 
   /** Emits `subscribed: false` for each subscription of [central]. */
@@ -667,17 +672,16 @@ internal class Peripheral(private val backend: GattifyBackend) {
 
   /**
    * [notification] stayed unanswered past its deadline and a grace. Ending the generation
-   * dropped every central for one that had gone quiet. A late `onNotificationSent` names
-   * this device, which no longer matches the one in flight, so it answers nothing.
+   * dropped every central for one that had gone quiet. This central is forgotten at once, as
+   * a disconnect forgets it: a notify to it then fails fast instead of taking the one slot
+   * the server has, and a late `onNotificationSent` from it finds nothing of its own.
    */
   @SuppressLint("MissingPermission")
   private fun dropStalled(notification: Notification) {
     val central = notification.central
     Log.w(TAG, "${central.id} stopped answering notifications")
-    val error = disconnected("${central.id} stopped answering")
-    for (waiting in notifications.removeWaiting { it.central === central }) waiting.procedure.reject(error)
     platformServer?.let { platform -> quietly { platform.cancelConnection(central.device) } }
-    notificationDone(notification, error)
+    centralGone(central, disconnected("${central.id} stopped answering"))
   }
 
   private fun notificationDone(notification: Notification, error: BleException?) {

@@ -64,7 +64,7 @@ tests. No radio behavior is verified on hardware yet.
   uses up the same quota.
 - On API 30 and earlier, scanning also needs the system location setting on.
 - Whether the platform keeps a connectable advertisement running after a
-  central connects depends on the device. The backend starts the advertisement
-  again after each connection, with the same data. A device that kept it
-  answers `ADVERTISE_FAILED_ALREADY_STARTED`, and the advertisement goes on.
-  No hardware run has confirmed yet that a second central finds the host.
+  central connects depends on the device. After each connection the backend
+  starts a copy of the advertisement, with the same data. The old one stops
+  only once the copy runs. A copy the device refuses leaves the old one as it
+  was. No hardware run has confirmed yet that a second central finds the host.
