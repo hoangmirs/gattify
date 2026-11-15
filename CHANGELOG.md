@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-11-15
+
 - An Android or iOS app no longer aborts when a native reply comes after Rust
   stopped waiting for it. A CLOSE write that timed out on a lost link did this:
   Tauri panicked when it sent the late `disconnected` reply. Each native
