@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An Android or iOS app no longer aborts when a native reply comes after Rust
+  stopped waiting for it. A CLOSE write that timed out on a lost link did this:
+  Tauri panicked when it sent the late `disconnected` reply. Each native
+  command now runs on its own task, which keeps the reply channel open.
+
 ## 0.1.1 - 2026-11-12
 
 An Android host keeps several centrals. Neither change has run on radio
