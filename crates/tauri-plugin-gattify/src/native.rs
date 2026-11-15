@@ -28,8 +28,27 @@ pub(crate) fn rejected(code: Option<&str>, message: Option<&str>) -> BleError {
     error
 }
 
+/// Runs a call to the native plugin on its own task, and waits for it. `None` when the task
+/// itself failed.
+///
+/// Tauri sends the native reply into a channel and unwraps that send. A caller that stops
+/// waiting, as `tokio::time::timeout` around a CLOSE write does on a lost link, drops the
+/// channel. The reply that comes later then panics in a JNI callback that cannot unwind, and
+/// Android aborts the app. The task holds the channel until the reply comes.
+#[cfg(any(
+    test,
+    all(feature = "tauri", any(target_os = "android", target_os = "ios"))
+))]
+pub(crate) async fn outliving_caller<T: Send + 'static>(
+    call: impl std::future::Future<Output = T> + Send + 'static,
+) -> Option<T> {
+    tokio::spawn(call).await.ok()
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use serde_json::json;
 
     use super::*;
@@ -115,5 +134,24 @@ mod tests {
 
         assert_eq!(error.code, ErrorCode::Internal);
         assert_eq!(error.native_code.as_deref(), Some("gattStatus133"));
+    }
+
+    #[tokio::test]
+    async fn a_native_call_keeps_its_reply_channel_after_the_caller_stops_waiting() {
+        // Tauri unwraps the send of a native reply. A reply that reached a dropped
+        // channel aborted an Android app when a CLOSE write timed out on a lost link.
+        let (reply, replied) = tokio::sync::oneshot::channel::<()>();
+        let (heard, was_heard) = tokio::sync::oneshot::channel::<bool>();
+        let call = outliving_caller(async move {
+            let _ = heard.send(replied.await.is_ok());
+        });
+        assert!(tokio::time::timeout(Duration::from_millis(10), call)
+            .await
+            .is_err());
+        assert!(
+            reply.send(()).is_ok(),
+            "the late reply still finds its channel"
+        );
+        assert!(was_heard.await.unwrap());
     }
 }

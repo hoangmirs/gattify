@@ -7,7 +7,7 @@ use tauri::{
 };
 
 use crate::{
-    native::{rejected, ExecuteArgs},
+    native::{outliving_caller, rejected, ExecuteArgs},
     Backend, BleError, BleResult, Command, ErrorCode, EventEnvelope, EventSink, OperationContext,
     Reply,
 };
@@ -46,20 +46,26 @@ impl<R: Runtime> MobileBackend<R> {
 #[async_trait]
 impl<R: Runtime> Backend for MobileBackend<R> {
     async fn execute(&self, context: OperationContext, command: Command) -> BleResult<Reply> {
-        let args = ExecuteArgs {
+        let args = serde_json::to_value(ExecuteArgs {
             operation_id: &context.operation_id,
             owner_id: &context.owner_id,
             deadline_millis: context.deadline_millis,
             command: &command,
-        };
-        self.0
-            .run_mobile_plugin_async("execute", args)
-            .await
-            .map_err(|error| match error {
-                PluginInvokeError::InvokeRejected(response) => {
-                    rejected(response.code.as_deref(), response.message.as_deref())
-                }
-                other => BleError::new(ErrorCode::Internal, other.to_string()),
-            })
+        })
+        .map_err(|error| BleError::new(ErrorCode::Internal, error.to_string()))?;
+        let native = self.0.clone();
+        outliving_caller(async move {
+            native
+                .run_mobile_plugin_async::<Reply>("execute", args)
+                .await
+        })
+        .await
+        .ok_or_else(|| BleError::new(ErrorCode::Internal, "the native call stopped"))?
+        .map_err(|error| match error {
+            PluginInvokeError::InvokeRejected(response) => {
+                rejected(response.code.as_deref(), response.message.as_deref())
+            }
+            other => BleError::new(ErrorCode::Internal, other.to_string()),
+        })
     }
 }

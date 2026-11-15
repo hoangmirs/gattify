@@ -26,6 +26,7 @@ this repository. No third-party code is copied here.
 | https://github.com/microsoft/Windows-universal-samples at `main`: `Samples/BluetoothLE/cs/Scenario3_ServerForeground.xaml.cs` | 2026-09-13 | What `IsDiscoverable` and `IsConnectable` mean, advertisement status handling, the deferral pattern | MIT | No. The sample is C# | Link only |
 | windows 0.61.3, windows-core 0.61.2, windows-future 0.2.1, windows-collections 0.2.0, windows-result 0.3.4 and windows-strings 0.4.2 crate sources | 2026-09-13 | WinRT API signatures, awaitable async operations, COM apartment setup, GUID and string conversion | MIT OR Apache-2.0 | No | Link only |
 | Prior knowledge of the WinRT backends of https://github.com/hbldh/bleak and https://github.com/kevincar/bless, not opened | 2026-09-13 | The order of the Windows connect and disconnect steps, and one service provider per service | MIT | No | Link only |
+| tauri 2.11.5 and 2.12.0 crate sources: `src/plugin/mobile.rs`; wry 0.55.1 and 0.57.1 crate sources: `src/android/mod.rs` | 2026-11-15 | Why a late native reply panics in `run_mobile_plugin_async`, and whether newer releases fix it | Apache-2.0 OR MIT | No | Link only |
 
 Dependency versions are recorded in Cargo.lock and package-lock.json after
 resolution. THIRD_PARTY_NOTICES.md records direct dependency licenses. Release
